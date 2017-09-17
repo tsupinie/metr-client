@@ -1,0 +1,1 @@
+/Users/tsupinie/software/javascript/require.js
