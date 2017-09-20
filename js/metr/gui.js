@@ -14,14 +14,11 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
             _this.width = _this.map.node().width
             _this.height = _this.map.node().height
 
-            _this.map.style('background-color', '#cccccc');
+            _this.zoom_trans = d3.zoomTransform(_this.map.node()).translate(_this.width / 2, _this.height / 2);
 
-            _this.zoom_trans = d3.zoomTransform(_this.map.node())
-                                 .translate(_this.width / 2, _this.height / 2);
-
-            var parallels = [30, 45]
-            var std_lon = -97.5
-            var std_lat = 37.5
+            var parallels = [30, 45];
+            var std_lon = -97.5;
+            var std_lat = 37.5;
 
             _this.map_proj = d3geo.geoConicConformal()
                                   .parallels(parallels)
@@ -29,13 +26,10 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
                                   .center([0, std_lat])
                                   .scale(1000)
                                   .translate([0, 0]);
+
             _this.p2e = 6371;
 
-            _this.proj = {'stream':function(s) {
-                return _this.map_proj.stream(_this._gt_from_zt(_this.zoom_trans).stream(s));
-            }};
-
-//          console.log(d3geo.geoPath(_this.proj)({'type':'Point', 'coordinates':[-97.5, 37.5]}));
+            _this._shader_prog = _this._setup_shaders();
 
             io.download_shape('/geo/us_cty.json', function(shp_file) {
                 _this.add_shape('US Counties', shp_file);
@@ -45,11 +39,12 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
                     _this.map.node().height = window.innerHeight;
                     _this.width = _this.map.node().width
                     _this.height = _this.map.node().height
-
+/*
                     // This has some interesting behavior when resizing while zoomed in ...
                     var zt = d3.zoomTransform(_this.map.node());
                     zt = zt.translate(_this.width / 2, _this.height / 2)
                     _this.zoom_trans = zt;
+*/
                     _this.draw();
                 });
                 _this.map.call(d3.zoom().scaleExtent([0.5, 120]).on("zoom", _this.zoom))
@@ -62,6 +57,7 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
             io.download_level2('KCRP', new Date(2017, 8, 26, 2, 53), 'REF', 0.5, function(l2_file) {
                 _this.add_level2('KCRP 0.5-degree reflectivity', l2_file);
             });
+
         };
 
         this.zoom = function() {
@@ -69,9 +65,13 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
             _this.draw();
         };
 
-        this.draw = function () {
-            var ctx = _this.map.node().getContext('2d');
-            ctx.clearRect(0, 0, _this.width, _this.height);
+        this.draw = function() {
+            var gl = _this.map.node().getContext('webgl');
+            gl.viewport(0, 0, _this.width, _this.height);
+            gl.clearColor(0.836, 0.836, 0.836, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT);
+
+            gl.useProgram(_this._shader_prog);
 
             for (ilyr in _this.draw_order) {
                 _this.draw_order[ilyr].draw();
@@ -79,25 +79,39 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
         };
 
         this.add_shape = function(shp_name, shp_file) {
-            var ctx = _this.map.node().getContext('2d');
-            ctx.strokeStyle = 'black';
-//          ctx.lineWidth = 0.5;
-
-            proj_data = [];
+            var proj_data = [];
+            var ipd = 0;
             for (ishp in shp_file.data) {
-                proj_data[ishp] = [];
                 for (ipt in shp_file.data[ishp]) {
-                    proj_data[ishp][ipt] = _this.map_proj(shp_file.data[ishp][ipt]);
+                    proj_pt = _this.map_proj(shp_file.data[ishp][ipt]);
+                    proj_data[ipd] = proj_pt[0];
+                    proj_data[ipd + 1] = proj_pt[1];
+                    ipd += 2;
                 }
+                proj_data[ipd] = NaN;
+                proj_data[ipd + 1] = NaN;
+                ipd += 2;
             }
 
+            var gl = _this.map.node().getContext('webgl');
+            var _pos = gl.getAttribLocation(_this._shader_prog, 'a_pos');
+            var _zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
+            var _posbuf = gl.createBuffer();
+
             _this.draw_order.push({'name':shp_name, 'draw':function() {
-                zoom = _this._gt_from_zt(_this.zoom_trans);
-                path = d3geo.geoPath(zoom, ctx);
-                ctx.beginPath();
-                path({'type': 'MultiLineString', 'coordinates':proj_data});
-                ctx.stroke();
-            }})
+                kx = _this.zoom_trans.k / _this.width;
+                ky = _this.zoom_trans.k / _this.height;
+                tx = (_this.zoom_trans.x - _this.width / 2) / _this.zoom_trans.k;
+                ty = (_this.zoom_trans.y - _this.height / 2) / _this.zoom_trans.k;
+
+                gl.enableVertexAttribArray(_pos);
+                gl.bindBuffer(gl.ARRAY_BUFFER, _posbuf);
+                gl.vertexAttribPointer(_pos, 2, gl.FLOAT, false, 0, 0);
+                gl.uniformMatrix3fv(_zoom, false, [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]);
+
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(proj_data), gl.DYNAMIC_DRAW);
+                gl.drawArrays(gl.LINE_STRIP, 0, proj_data.length / 2);
+            }});
 
             _this.draw();
         };
@@ -125,6 +139,7 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
             }
 
             _this.draw_order.unshift({'name':level2_name, 'draw':function() {
+/*
                 var rdr_loc = _this.map_proj([site_info.longitude, site_info.latitude]);
                 var rdr_px = _this.zoom_trans.apply(rdr_loc);
 
@@ -159,6 +174,7 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
                     }
                 }
 //              ctx.putImageData(scimg, 0, 0);
+*/
             }});
             _this.draw();
         };
@@ -191,6 +207,57 @@ define(['d3', 'd3-geo', 'metr/io'], function(d3, d3geo, io) {
             else if (ref >= 70 && ref < 75) { color = [0,   0,   0,   255]; }
             else { color = [0, 0, 0, 0]; }
             return color;
+        }
+
+        this._setup_shaders = function() {
+            var gl = _this.map.node().getContext('webgl');
+
+            var _vert_shader_src = `
+                attribute vec2 a_pos;
+                uniform mat3 u_zoom;
+
+                void main() {
+                    vec2 zoom_pos = (vec3(a_pos, 1.0) * u_zoom).xy;
+                    gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
+                }
+            `;
+
+            var _frag_shader_src = `
+                precision mediump float;
+
+                void main() {
+                    gl_FragColor = vec4(0, 0, 0, 1);
+                }
+            `;
+
+            var compile_shader = function(type, src) {
+                var shader = gl.createShader(type);
+                gl.shaderSource(shader, src);
+                gl.compileShader(shader);
+                var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+                if (success) {
+                    return shader;
+                }
+
+                console.log(gl.getShaderInfoLog(shader));
+                gl.deleteShader(shader);
+            }
+
+            var vert_shader = compile_shader(gl.VERTEX_SHADER, _vert_shader_src);
+            var frag_shader = compile_shader(gl.FRAGMENT_SHADER, _frag_shader_src);
+
+            shader_prog = gl.createProgram();
+            gl.attachShader(shader_prog, vert_shader);
+            gl.attachShader(shader_prog, frag_shader);
+            gl.linkProgram(shader_prog);
+
+            var link_success = gl.getProgramParameter(shader_prog, gl.LINK_STATUS);
+            if (link_success) {
+                return shader_prog
+            }
+
+            console.log(gl.getProgramInfoLog(shader_prog));
+            gl.deleteProgram(shader_prog);
         }
     };
     return new gui()
