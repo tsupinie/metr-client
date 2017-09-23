@@ -7,8 +7,8 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
         this._base_url = "http://127.0.0.1:8000/data";
 
         this.download_level2 = function(site, time, field, elevation, cb) {
-            var time_str = sprintf("%04d%02d%02d_%02d%02d", time.getFullYear(), time.getMonth(), time.getDate(), 
-                                   time.getHours(), time.getMinutes());
+            var time_fmt = d3.timeFormat("%Y%m%d_%H%M");
+            var time_str = time_fmt(time);
             var url = sprintf("/l2/%s_%s_%04.1f_%s.json", site, field, elevation, time_str);
             this._fetch_url(url, function(l2_file) {
 /*
