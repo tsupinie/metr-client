@@ -44,46 +44,51 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                                   .scale(1000)
                                   .translate([0, 0]);
 
-            io.download_shape('/geo/us_cty.json', function(shp_file) {
-                _this.add_shape(shp_file);
+            
 
-                window.addEventListener('resize', function() {
-                    _this.map.node().width = window.innerWidth;
-                    _this.map.node().height = window.innerHeight;
-                    var old_width = _this.width;
-                    var old_height = _this.height;
-                    _this.width = _this.map.node().width
-                    _this.height = _this.map.node().height
+            var gl = _this.map.node().getContext('webgl');
+            var shp_layer = new ShapeLayer(gl, _this.draw, 'geo', 'us_cty');
+            shp_layer.set_map_projection(_this.map_proj)
+            _this.draw_order.push(shp_layer);
 
-                    _this.status.style('top', _this.height - _this._stat_hgt).style('height', _this.stat_hgt);
+            window.addEventListener('resize', function() {
+                _this.map.node().width = window.innerWidth;
+                _this.map.node().height = window.innerHeight;
+                var old_width = _this.width;
+                var old_height = _this.height;
+                _this.width = _this.map.node().width
+                _this.height = _this.map.node().height
+
+                _this.status.style('top', _this.height - _this._stat_hgt).style('height', _this.stat_hgt);
+                _this.menu.style('height', _this.height - _this._stat_hgt)
 /*
-                    var old_full_width = (old_width * _this.zoom_trans.k);
-                    var new_full_width = (_this.width * _this.zoom_trans.k);
-                    var old_full_height = (old_height * _this.zoom_trans.k);
-                    var new_full_height = (_this.height * _this.zoom_trans.k);
+                var old_full_width = (old_width * _this.zoom_trans.k);
+                var new_full_width = (_this.width * _this.zoom_trans.k);
+                var old_full_height = (old_height * _this.zoom_trans.k);
+                var new_full_height = (_this.height * _this.zoom_trans.k);
 
-                    var new_x = new_full_width * _this.zoom_trans.x / old_full_width;
-                    var new_y = new_full_height * _this.zoom_trans.y / old_full_height;
-                    _this.trans_x = (new_x - _this.zoom_trans.x) / _this.zoom_trans.k 
-                    _this.trans_y = (new_y - _this.zoom_trans.y) / _this.zoom_trans.k
+                var new_x = new_full_width * _this.zoom_trans.x / old_full_width;
+                var new_y = new_full_height * _this.zoom_trans.y / old_full_height;
+                _this.trans_x = (new_x - _this.zoom_trans.x) / _this.zoom_trans.k 
+                _this.trans_y = (new_y - _this.zoom_trans.y) / _this.zoom_trans.k
 */
 
-                    _this.trans_x = -(_this.width - _this.init_width) / 2;
-                    _this.trans_y = -(_this.height - _this.init_height) / 2;
+                _this.trans_x = -(_this.width - _this.init_width) / 2;
+                _this.trans_y = -(_this.height - _this.init_height) / 2;
 
-                    _this.set_zoom(d3.zoomTransform(_this.map.node()));
-                    _this.draw();
-                });
-                _this.map.call(d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom))
+                _this.set_zoom(d3.zoomTransform(_this.map.node()));
+                _this.draw();
             });
 
+            _this.map.call(d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom))
+/*
             io.download_88d_list(function(wsrdf) {
                 _mod.wsr88ds = wsrdf;
                 io.download_level2('KCRP', new Date(2017, 7, 26, 1, 53), 'REF', 0.5, function(l2_file) {
                     _this.add_level2(l2_file);
                 });
             });
-
+*/
         };
 
         this.zoom = function() {
@@ -110,12 +115,6 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             for (ilyr in _this.draw_order) {
                 _this.draw_order[ilyr].draw(zoom_matrix);
             }
-        };
-
-        this.add_shape = function(shp_file) {
-            var gl = _this.map.node().getContext('webgl');
-            _this.draw_order.push(new ShapeLayer(gl, _this.map_proj, shp_file));
-            _this.draw();
         };
 
         this.add_level2 = function(l2_file) {
@@ -197,22 +196,52 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
     };
 
-    this.ShapeLayer = function(gl, map_proj, shp_file) {
+    this.ShapeLayer = function(gl, cb_redraw, cls, name) {
         var _this = this;
 
-        this.init = function(gl, map_proj, shp_file) {
+        this.init = function(gl, cb_redraw, cls, name) {
             _this._gl = gl;
-            _this._shader_prog = _mod.compile_shaders(gl, _this._vert_shader_src, _this._frag_shader_src);
+            _this._trigger_redraw = cb_redraw
 
-            _this._pos = gl.getAttribLocation(_this._shader_prog, 'a_pos');
+            _this._pos = gl.getAttribLocation(ShapeLayer._shader_prog, 'a_pos');
             _this._posbuf = gl.createBuffer();
-            _this._zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
+            _this._zoom = gl.getUniformLocation(ShapeLayer._shader_prog, 'u_zoom');
 
             _this._proj_data = [];
+            var tag = sprintf('shapefile.%s.%s', cls, name);
+            io.register_handler(tag, _this.receive_data);
+            io.request({'type':'shapefile', 'domain':cls, 'name':name});
+        };
+
+        this.receive_data = function(shp_file) {
+            /* Optimize/simplify this function */
+            var shp_data = shp_file.data;
+            shp_file.data = [[]];
+
+            var slc_start = 0;
+            var nshp = 0;
+            for (var i = 0; i < shp_data.length; i++) {
+                if (isNaN(shp_data[i])) {
+                    slc_start = i + 1;
+                    nshp++;
+                    shp_file.data[nshp] = [];
+                }
+                else {
+                    shp_file.data[nshp][i - slc_start] = shp_data[i];
+                }
+            }
+            for (var i = 0; i < shp_file.data.length; i++) {
+                shp = shp_file.data[i];
+                shp_file.data[i] = [];
+
+                for (var j = 0; j < shp.length; j += 2) {
+                    shp_file.data[i][j / 2] = [shp[j], shp[j + 1]];
+                }
+            }
             var ipd = 0;
             for (ishp in shp_file.data) {
                 for (ipt in shp_file.data[ishp]) {
-                    proj_pt = map_proj(shp_file.data[ishp][ipt]);
+                    proj_pt = _this.map_proj(shp_file.data[ishp][ipt]);
                     _this._proj_data[ipd] = proj_pt[0];
                     _this._proj_data[ipd + 1] = proj_pt[1];
                     ipd += 2;
@@ -221,11 +250,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this._proj_data[ipd + 1] = NaN;
                 ipd += 2;
             }
+            _this._trigger_redraw();
         };
 
         this.draw = function(zoom_matrix) {
             gl = _this._gl;
-            gl.useProgram(_this._shader_prog);
+            gl.useProgram(ShapeLayer._shader_prog);
             gl.enableVertexAttribArray(_this._pos);
             gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
             gl.vertexAttribPointer(_this._pos, 2, gl.FLOAT, false, 0, 0);
@@ -239,7 +269,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
         };
 
-        this._vert_shader_src = `
+        this.set_map_projection = function(map_proj) {
+            _this.map_proj = map_proj;
+        };
+
+        var _vert_shader_src = `
             attribute vec2 a_pos;
             uniform mat3 u_zoom;
 
@@ -249,7 +283,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        this._frag_shader_src = `
+        var _frag_shader_src = `
             precision mediump float;
 
             void main() {
@@ -257,13 +291,15 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        this.init(gl, map_proj, shp_file);
+        ShapeLayer._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+        this.init(gl, cb_redraw, cls, name);
     };
 
     this.Level2Layer = function(gl, map_proj, l2_file) {
         var _this = this;
 
         this.init = function(gl, map_proj, l2_file) {
+            _this._l2_file = l2_file
             _this._rdr_loc = map_proj([l2_file.site_longitude, l2_file.site_latitude]);
             start_loc = map_proj([l2_file.first_longitude, l2_file.first_latitude]);
 
@@ -314,20 +350,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             var ipt = 0;
             for (var iaz = 0; iaz < tex_size_y; iaz++) {
                 for (var irn = 0; irn < tex_size_x; irn++) {
-                    if (iaz < l2_file.n_rays && irn < l2_file.n_gates) { 
-                        var igt = l2_file.n_gates * iaz + irn;
-                        var color = _this._reflectivity_color_map(l2_file.data[igt]);
-                        refl_img[ipt + 0] = color[0];
-                        refl_img[ipt + 1] = color[1];
-                        refl_img[ipt + 2] = color[2];
-                        refl_img[ipt + 3] = color[3];
-                    }
-                    else {
-                        refl_img[ipt + 0] = 0
-                        refl_img[ipt + 1] = 0
-                        refl_img[ipt + 2] = 0
-                        refl_img[ipt + 3] = 0
-                    }
+                    var igt = l2_file.n_gates * iaz + irn;
+                    var color = _this._reflectivity_color_map(l2_file.data[igt]);
+                    refl_img[ipt + 0] = color[0];
+                    refl_img[ipt + 1] = color[1];
+                    refl_img[ipt + 2] = color[2];
+                    refl_img[ipt + 3] = color[3];
                     ipt += 4;
                 }
             }

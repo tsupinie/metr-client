@@ -5,19 +5,42 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
     var io = function() {
         var _this = this;
         this._base_url = "http://127.0.0.1:8000/data";
+        this._server_url = "ws://127.0.0.1:8001";
+
+        this.data_handlers = {};
+
+        this.init_io = function() {
+            _this._ws = new WebSocket(this._server_url);
+
+            _this._ws.onopen = function(event) {
+
+            };
+
+            _this._ws.onmessage = function(event) {
+                msg_json = JSON.parse(event.data);
+                msg_json.data = _this.decompress(msg_json.data);
+                handler = msg_json.handler;
+                _this.data_handlers[handler](msg_json);
+            };
+        };
+
+        this.register_handler = function(name, cb) {
+            _this.data_handlers[name] = cb;
+        };
+
+        this.unregister_handler = function(name) {
+            delete _this.data_handlers[name];
+        };
+
+        this.request = function(msg_json) {
+            _this._ws.send(JSON.stringify(msg_json));
+        };
 
         this.download_level2 = function(site, time, field, elevation, cb) {
             var time_fmt = d3.timeFormat("%Y%m%d_%H%M");
             var time_str = time_fmt(time);
             var url = sprintf("/l2/%s_%s_%04.1f_%s.json", site, field, elevation, time_str);
             this._fetch_url(url, function(l2_file) {
-/*
-                l2_file._data = l2_file.data
-                l2_file.data = function(iaz, igt) {
-                    var idx = l2_file.n_gates * iaz + igt;
-                    return l2_file._data[idx]
-                }
-*/
                 cb(l2_file);
             });
         };
@@ -28,29 +51,6 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
 
         this.download_shape = function(url, cb) {
             this._fetch_url(url, function(shp_file) {
-                var shp_data = shp_file.data;
-                shp_file.data = [[]];
-
-                var slc_start = 0;
-                var nshp = 0;
-                for (var i = 0; i < shp_data.length; i++) {
-                    if (isNaN(shp_data[i])) {
-                        slc_start = i + 1;
-                        nshp++;
-                        shp_file.data[nshp] = [];
-                    }
-                    else {
-                        shp_file.data[nshp][i - slc_start] = shp_data[i];
-                    }
-                }
-                for (var i = 0; i < shp_file.data.length; i++) {
-                    shp = shp_file.data[i];
-                    shp_file.data[i] = [];
-
-                    for (var j = 0; j < shp.length; j += 2) {
-                        shp_file.data[i][j / 2] = [shp[j], shp[j + 1]];
-                    }
-                }
                 cb(shp_file);
             });
         };
@@ -70,6 +70,7 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
             return decomp_data
         };
 
+        _this.init_io();
     };
     return new io()
 });
