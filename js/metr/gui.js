@@ -23,6 +23,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this.status = d3.select('#status');
             _this.status.style('height', _this._stat_hgt).style('top', _this.height - _this._stat_hgt)
 
+            _this.menu = d3.select('#menu');
+            _this.menu.style('height', _this.height - _this._stat_hgt)
+            _this.menu_tabs = d3.select('#menutabs');
+            _this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
+            _this.menu_visible = "";
+
             _this.trans_x = 0;
             _this.trans_y = 0;
             _this.set_zoom(d3.zoomTransform(_this.map.node()));
@@ -129,7 +135,66 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             elem.text(stat_txt);
             var hgt = (_this._stat_hgt - elem.node().getBoundingClientRect().height) / 2;
             elem.style('margin-top', hgt).style('margin-bottom', hgt);
-        }
+        };
+
+        this.toggle_menu = function(menu_item) {
+            var unselected = "rgba(0, 0, 0, 0.6)";
+            var selected = "rgba(77, 77, 77, 0.6)";
+            var menu_name = menu_item.innerHTML;
+            if (_this.menu_visible == menu_item) {
+                _this.menu.node().style.background = unselected;
+                menu_item.style.background = unselected;
+                _this.toggle_menu_bar();
+
+                _this.menu_visible = "";
+            }
+            else {
+                if (_this.menu_visible != "") {
+                    _this.menu_visible.style.background = unselected;
+                }
+                _this.menu.node().style.background = selected;
+                menu_item.style.background = selected;
+
+                if (_this.menu_visible == "") {
+                    _this.toggle_menu_bar();
+                }
+
+                try {
+                    _this.show_menu[menu_item.innerHTML]();
+                }
+                catch (err) {
+                    _this.show_menu['default']();
+                }
+                _this.menu_visible = menu_item;
+            }
+        };
+
+        this.show_menu = {
+            'Layers': function() {
+                _this.menu.html("");
+                var ul = _this.menu.append('ul');
+                for (var ilyr = _this.draw_order.length - 1; ilyr > -1; ilyr--) {
+                    _this.draw_order[ilyr].layer_menu(ul);
+                }
+            },
+            'default': function() {
+                _this.menu.html("");
+            }
+        };
+
+        this.toggle_menu_bar = function() {
+            var trans = d3.transition().duration(500);
+            var bar_width = '150px';
+            if (_this.menu_visible == "") {
+                _this.menu.style('width', bar_width).style('left', '-' + bar_width);
+                _this.menu.transition(trans).style('left', '0px');
+                _this.menu_tabs.transition(trans).style('left', bar_width);
+            }
+            else {
+                _this.menu.transition(trans).style('left', '-' + bar_width);
+                _this.menu_tabs.transition(trans).style('left', '0px');
+            }
+        };
     };
 
     this.ShapeLayer = function(gl, map_proj, shp_file) {
@@ -168,6 +233,10 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
             gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._proj_data), gl.DYNAMIC_DRAW);
             gl.drawArrays(gl.LINE_STRIP, 0, _this._proj_data.length / 2);
+        };
+
+        this.layer_menu = function(root) {
+
         };
 
         this._vert_shader_src = `
@@ -298,6 +367,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             gl.drawArrays(gl.TRIANGLE_STRIP, 0, _this._pts.length / 2);
         };
 
+        this.layer_menu = function(root) {
+            
+        };
 
         this._get_site_info = function(site) {
             var site_info;
