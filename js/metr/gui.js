@@ -44,12 +44,18 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                                   .scale(1000)
                                   .translate([0, 0]);
 
-            
-
             var gl = _this.map.node().getContext('webgl');
-            var shp_layer = new ShapeLayer(gl, _this.draw, 'geo', 'us_cty');
-            shp_layer.set_map_projection(_this.map_proj)
+            var shp_layer = new ShapeLayer(gl, 'geo', 'us_cty');
+            shp_layer.set_map_projection(_this.map_proj);
+            shp_layer.register_callback('redraw', _this.draw);
+            shp_layer.register_callback('status', _this.set_status);
             _this.draw_order.push(shp_layer);
+
+            var l2_layer = new Level2Layer(gl, 'KGLD', 'REF', 0.5);
+            l2_layer.set_map_projection(_this.map_proj);
+            l2_layer.register_callback('redraw', _this.draw);
+            l2_layer.register_callback('status', _this.set_status);
+            _this.draw_order.unshift(l2_layer);
 
             window.addEventListener('resize', function() {
                 _this.map.node().width = window.innerWidth;
@@ -81,14 +87,6 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             });
 
             _this.map.call(d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom))
-/*
-            io.download_88d_list(function(wsrdf) {
-                _mod.wsr88ds = wsrdf;
-                io.download_level2('KCRP', new Date(2017, 7, 26, 1, 53), 'REF', 0.5, function(l2_file) {
-                    _this.add_level2(l2_file);
-                });
-            });
-*/
         };
 
         this.zoom = function() {
@@ -116,19 +114,15 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this.draw_order[ilyr].draw(zoom_matrix);
             }
         };
-
+/*
         this.add_level2 = function(l2_file) {
             var gl = _this.map.node().getContext('webgl');
-            var time_parse = d3.timeParse("%Y%m%d_%H%M");
-            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
-            var time_str = time_fmt(time_parse(l2_file.timestamp))
-            var stat_str = sprintf("%s %.1f\u00b0 %s (%s)", l2_file.site, l2_file.elevation, l2_file.field, time_str);
             _this.set_status(stat_str);
 
             _this.draw_order.unshift(new Level2Layer(gl, _this.map_proj, l2_file));
             _this.draw();
         };
-
+*/
         this.set_status = function(stat_txt) {
             var elem = _this.status.select('p');
             elem.text(stat_txt);
@@ -196,12 +190,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
     };
 
-    this.ShapeLayer = function(gl, cb_redraw, cls, name) {
+    this.ShapeLayer = function(gl, cls, name) {
         var _this = this;
 
-        this.init = function(gl, cb_redraw, cls, name) {
+        this.init = function(gl, cls, name) {
             _this._gl = gl;
-            _this._trigger_redraw = cb_redraw
+            _this._callbacks = {};
 
             _this._pos = gl.getAttribLocation(ShapeLayer._shader_prog, 'a_pos');
             _this._posbuf = gl.createBuffer();
@@ -214,46 +208,30 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
 
         this.receive_data = function(shp_file) {
-            /* Optimize/simplify this function */
-            var shp_data = shp_file.data;
-            shp_file.data = [[]];
-
-            var slc_start = 0;
-            var nshp = 0;
-            for (var i = 0; i < shp_data.length; i++) {
-                if (isNaN(shp_data[i])) {
-                    slc_start = i + 1;
-                    nshp++;
-                    shp_file.data[nshp] = [];
+            _this._proj_data = [];
+            var ipp = 0;
+            for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
+                if (isNaN(shp_file.data[ipt])) {
+                    _this._proj_data[ipp] = NaN;
+                    _this._proj_data[ipp + 1] = NaN;
                 }
                 else {
-                    shp_file.data[nshp][i - slc_start] = shp_data[i];
+                    var raw_pt = [shp_file.data[ipt], shp_file.data[ipt + 1]];
+                    var proj_pt = _this.map_proj(raw_pt);
+                    _this._proj_data[ipp] = proj_pt[0];
+                    _this._proj_data[ipp + 1] = proj_pt[1];
+                    ipt++;
                 }
+                ipp += 2;
             }
-            for (var i = 0; i < shp_file.data.length; i++) {
-                shp = shp_file.data[i];
-                shp_file.data[i] = [];
-
-                for (var j = 0; j < shp.length; j += 2) {
-                    shp_file.data[i][j / 2] = [shp[j], shp[j + 1]];
-                }
-            }
-            var ipd = 0;
-            for (ishp in shp_file.data) {
-                for (ipt in shp_file.data[ishp]) {
-                    proj_pt = _this.map_proj(shp_file.data[ishp][ipt]);
-                    _this._proj_data[ipd] = proj_pt[0];
-                    _this._proj_data[ipd + 1] = proj_pt[1];
-                    ipd += 2;
-                }
-                _this._proj_data[ipd] = NaN;
-                _this._proj_data[ipd + 1] = NaN;
-                ipd += 2;
-            }
-            _this._trigger_redraw();
+            _this._callbacks['redraw']();
         };
 
         this.draw = function(zoom_matrix) {
+            if (_this._proj_data == []) {
+                return;
+            }
+
             gl = _this._gl;
             gl.useProgram(ShapeLayer._shader_prog);
             gl.enableVertexAttribArray(_this._pos);
@@ -269,8 +247,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
         };
 
-        this.set_map_projection = function(map_proj) {
+        this.set_map_projection = function(map_proj){
             _this.map_proj = map_proj;
+        };
+
+        this.register_callback = function(action, cb) {
+            _this._callbacks[action] = cb;
         };
 
         var _vert_shader_src = `
@@ -292,29 +274,38 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         `;
 
         ShapeLayer._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
-        this.init(gl, cb_redraw, cls, name);
+        this.init(gl, cls, name);
     };
 
-    this.Level2Layer = function(gl, map_proj, l2_file) {
+    this.Level2Layer = function(gl, site, field, elev) {
         var _this = this;
 
-        this.init = function(gl, map_proj, l2_file) {
-            _this._l2_file = l2_file
-            _this._rdr_loc = map_proj([l2_file.site_longitude, l2_file.site_latitude]);
-            start_loc = map_proj([l2_file.first_longitude, l2_file.first_latitude]);
-
-            rdr_px = _this._rdr_loc
-            start_px = start_loc
-
+        this.init = function(gl, site, field, elev) {
             _this._gl = gl;
-            _this._shader_prog = _mod.compile_shaders(gl, _this._vert_shader_src, _this._frag_shader_src);
-            _this._pos = gl.getAttribLocation(_this._shader_prog, 'a_pos');
+            _this._callbacks = {};
+
+            _this._pos = gl.getAttribLocation(Level2Layer._shader_prog, 'a_pos');
             _this._posbuf = gl.createBuffer();
-            _this._texc = gl.getAttribLocation(_this._shader_prog, 'a_tex');
+            _this._texc = gl.getAttribLocation(Level2Layer._shader_prog, 'a_tex');
             _this._texcbuf = gl.createBuffer();
-            _this._tex = gl.getUniformLocation(_this._shader_prog, 'u_tex');
-            _this._zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
-            _this._rdr = gl.getUniformLocation(_this._shader_prog, 'u_rdr_pos');
+            _this._tex = gl.getUniformLocation(Level2Layer._shader_prog, 'u_tex');
+            _this._zoom = gl.getUniformLocation(Level2Layer._shader_prog, 'u_zoom');
+            _this._rdr = gl.getUniformLocation(Level2Layer._shader_prog, 'u_rdr_pos');
+
+            var int_deg = Math.floor(elev);
+            var frc_deg = Math.round((elev - int_deg) * 10);
+            var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
+            io.register_handler(tag, _this.receive_data);
+            io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':elev});
+        };
+
+        this.receive_data = function(l2_file) {
+            _this._l2_file = l2_file
+            _this._rdr_loc = _this.map_proj([l2_file.site_longitude, l2_file.site_latitude]);
+            var start_loc = _this.map_proj([l2_file.first_longitude, l2_file.first_latitude]);
+
+            var rdr_px = _this._rdr_loc;
+            var start_px = start_loc;
 
             var st_rn = Math.sqrt((start_px[0] - rdr_px[0]) ** 2 + (start_px[1] - rdr_px[1]) ** 2);
             var st_az = Math.atan2(start_px[1] - rdr_px[1], start_px[0] - rdr_px[0]) * 180 / Math.PI;
@@ -360,6 +351,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 }
             }
 
+            var gl = _this._gl;
             _this._rdr_tex = gl.createTexture();
             gl.bindTexture(gl.TEXTURE_2D, _this._rdr_tex);
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
@@ -368,11 +360,24 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_size_x, tex_size_y, 0, gl.RGBA, 
                           gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
+
+            _this._callbacks['redraw']();
+
+            var time_parse = d3.timeParse("%Y%m%d_%H%M");
+            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
+            var time_str = time_fmt(time_parse(_this._l2_file.timestamp))
+            var stat_str = sprintf("%s %.1f\u00b0 %s (%s)", _this._l2_file.site, _this._l2_file.elevation, _this._l2_file.field, time_str);
+
+            _this._callbacks['status'](stat_str);
         };
 
         this.draw = function(zoom_matrix) {
+            if (_this._l2_file === undefined) {
+                return;
+            }
+
             gl = _this._gl;
-            gl.useProgram(_this._shader_prog);
+            gl.useProgram(Level2Layer._shader_prog);
 
             gl.enableVertexAttribArray(_this._pos);
             gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
@@ -399,18 +404,15 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             
         };
 
-        this._get_site_info = function(site) {
-            var site_info;
-            for (i88d in _mod.wsr88ds) {
-                if (_mod.wsr88ds[i88d].id == site) {
-                    site_info = _mod.wsr88ds[i88d];
-                    break;
-                }
-            }
-            return site_info;
+        this.set_map_projection = function(map_proj){
+            _this.map_proj = map_proj;
         };
 
-        this._vert_shader_src = `
+        this.register_callback = function(action, cb) {
+            _this._callbacks[action] = cb;
+        };
+
+        var _vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_tex;
             uniform mat3 u_zoom;
@@ -426,7 +428,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        this._frag_shader_src = `
+        var _frag_shader_src = `
             precision mediump float;
 
             varying vec2 v_tex;
@@ -436,6 +438,8 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 gl_FragColor = texture2D(u_tex, v_tex);
             }
         `;
+
+        Level2Layer._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
 
         this._reflectivity_color_map = function(ref) {
             var color;
@@ -458,7 +462,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             return color;
         }
 
-        this.init(gl, map_proj, l2_file);
+        this.init(gl, site, field, elev);
     }
 
     this.compile_shaders = function(gl, vert_shader_src, frag_shader_src) {

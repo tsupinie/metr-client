@@ -17,9 +17,11 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
             };
 
             _this._ws.onmessage = function(event) {
-                msg_json = JSON.parse(event.data);
+                var msg_json = JSON.parse(event.data);
                 msg_json.data = _this.decompress(msg_json.data);
-                handler = msg_json.handler;
+                var handler = msg_json.handler;
+                var dt = d3.timeFormat("%d %b %Y %H:%M:%S")(new Date());
+                console.log(dt + ': Receiving data for ' + handler);
                 _this.data_handlers[handler](msg_json);
             };
         };
@@ -34,33 +36,6 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
 
         this.request = function(msg_json) {
             _this._ws.send(JSON.stringify(msg_json));
-        };
-
-        this.download_level2 = function(site, time, field, elevation, cb) {
-            var time_fmt = d3.timeFormat("%Y%m%d_%H%M");
-            var time_str = time_fmt(time);
-            var url = sprintf("/l2/%s_%s_%04.1f_%s.json", site, field, elevation, time_str);
-            this._fetch_url(url, function(l2_file) {
-                cb(l2_file);
-            });
-        };
-
-        this.download_88d_list = function(cb) {
-            d3.json(sprintf("%s/wsr88ds.json", _this._base_url)).get(cb);
-        };
-
-        this.download_shape = function(url, cb) {
-            this._fetch_url(url, function(shp_file) {
-                cb(shp_file);
-            });
-        };
-
-        this._fetch_url = function(url, cb) {
-            var full_url = sprintf("%s%s", _this._base_url, url);
-            d3.json(full_url).get(function(df) {
-                df.data = _this.decompress(df.data);
-                cb(df);
-            })
         };
 
         this.decompress = function(data) {
