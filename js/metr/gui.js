@@ -46,13 +46,21 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                                   .translate([0, 0]);
 
             var gl = _this.map.node().getContext('webgl');
+
             var shp_layer = new ShapeLayer(gl, 'geo', 'us_cty');
             shp_layer.set_map_projection(_this.map_proj);
             shp_layer.register_callback('redraw', _this.draw);
             shp_layer.register_callback('status', _this.set_status);
             _this.draw_order.push(shp_layer);
 
-            var l2_layer = new Level2Layer(gl, 'KGLD', 'REF', 0.5);
+            shp_layer = new ShapeLayer(gl, 'geo', 'us_st');
+            shp_layer.set_map_projection(_this.map_proj);
+            shp_layer.set_linewidth(2);
+            shp_layer.register_callback('redraw', _this.draw);
+            shp_layer.register_callback('status', _this.set_status);
+            _this.draw_order.push(shp_layer);
+
+            var l2_layer = new Level2Layer(gl, 'KTLX', 'REF', 0.5);
             l2_layer.set_map_projection(_this.map_proj);
             l2_layer.register_callback('redraw', _this.draw);
             l2_layer.register_callback('status', _this.set_status);
@@ -112,7 +120,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
 
             for (ilyr in _this.draw_order) {
-                _this.draw_order[ilyr].draw(zoom_matrix);
+                _this.draw_order[ilyr].draw(zoom_matrix, _this.zoom_trans.k);
             }
         };
 
@@ -271,6 +279,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this._posbuf = gl.createBuffer();
             _this._zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
             _this._delta = gl.getUniformLocation(_this._shader_prog, 'u_delta');
+            _this.set_linewidth(1);
 
             _this._proj_data = [];
             var tag = sprintf('shapefile.%s.%s', cls, name);
@@ -298,7 +307,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this._callbacks['redraw']();
         };
 
-        this.draw = function(zoom_matrix) {
+        this.draw = function(zoom_matrix, zoom_fac) {
             if (_this._proj_data == []) {
                 return;
             }
@@ -310,8 +319,13 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             gl.vertexAttribPointer(_this._pos, 2, gl.FLOAT, false, 0, 0);
             gl.uniformMatrix3fv(_this._zoom, false, zoom_matrix);
 
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._proj_data), gl.DYNAMIC_DRAW);
-            gl.drawArrays(gl.LINE_STRIP, 0, _this._proj_data.length / 2);
+            for (ivec in _this._delta_vectors) {
+                vec = _this._delta_vectors[ivec];
+
+                gl.uniform2f(_this._delta, vec[0] / zoom_fac, vec[1] / zoom_fac); 
+                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._proj_data), gl.DYNAMIC_DRAW);
+                gl.drawArrays(gl.LINE_STRIP, 0, _this._proj_data.length / 2);
+            }
         };
 
         this.layer_menu = function(root) {
@@ -324,16 +338,34 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this.map_proj = map_proj;
         };
 
+        this.set_linewidth = function(linewidth) {
+            _this.linewidth = linewidth;
+            _this._delta_vectors = _this._compute_delta_vectors(_this.linewidth);
+        };
+
         this.register_callback = function(action, cb) {
             _this._callbacks[action] = cb;
         };
 
+        this._compute_delta_vectors = function(linewidth) {
+            /* This will not be general. In the future, will probably have to actually do poly-lines. */
+            var vecs;
+            if (linewidth == 1) {
+                vecs = [[0, 0]];
+            }
+            else if (linewidth == 2) {
+                vecs = [[0.5, 0.5], [0.5, -0.5], [-0.5, -0.5], [0.5, -0.5]];
+            }
+            return vecs
+        };
+
         var _vert_shader_src = `
             attribute vec2 a_pos;
+            uniform vec2 u_delta;
             uniform mat3 u_zoom;
 
             void main() {
-                vec2 zoom_pos = (vec3(a_pos, 1.0) * u_zoom).xy;
+                vec2 zoom_pos = (vec3(a_pos + u_delta, 1.0) * u_zoom).xy;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
             }
         `;
@@ -447,7 +479,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this._callbacks['status'](stat_str);
         };
 
-        this.draw = function(zoom_matrix) {
+        this.draw = function(zoom_matrix, zoom_fac) {
             if (_this._l2_file === undefined) {
                 return;
             }
