@@ -8,12 +8,19 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
         this._server_url = "ws://127.0.0.1:8001";
 
         this.data_handlers = {};
+        this._early_requests = [];
 
         this.init_io = function() {
             _this._ws = new WebSocket(this._server_url);
 
             _this._ws.onopen = function(event) {
+                _this.request = function(msg_json) {
+                    _this._ws.send(JSON.stringify(msg_json));
+                };
 
+                for (var ireq in _this._early_requests) {
+                    _this.request(_this._early_requests[ireq]);
+                }
             };
 
             _this._ws.onmessage = function(event) {
@@ -35,7 +42,7 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
         };
 
         this.request = function(msg_json) {
-            _this._ws.send(JSON.stringify(msg_json));
+            _this._early_requests.push(msg_json);
         };
 
         this.decompress = function(data) {
