@@ -417,16 +417,10 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
             var st_rn = Math.sqrt((start_px[0] - rdr_px[0]) ** 2 + (start_px[1] - rdr_px[1]) ** 2);
             var st_az = Math.atan2(start_px[1] - rdr_px[1], start_px[0] - rdr_px[0]) * 180 / Math.PI;
-            var drng = 250 * st_rn / l2_file.st_range;
-            var dazim;
+            var drng = l2_file.drng * st_rn / l2_file.st_range;
+            var dazim = l2_file.dazim;
             var tex_size_x = l2_file.n_gates;
             var tex_size_y = l2_file.n_rays;
-            if (l2_file.n_rays == 720) {
-                dazim = 0.5;
-            }
-            else {
-                dazim = 1.0;
-            }
 
             var ipt = 0;
             _this._pts = [];
