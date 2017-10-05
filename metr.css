@@ -60,6 +60,8 @@ div#menutabs li {
     text-align: center;
 
     cursor: pointer;
+    border-bottom-left-radius:2px;
+    border-bottom-right-radius:2px;
 }
 
 div#menu {
@@ -68,4 +70,41 @@ div#menu {
     left: -100px;
     width: 100px;
     background: rgba(0, 0, 0, 0.6);
+}
+
+div#menu ul {
+    list-style-type: none;
+    padding: 0px;
+    margin: 0px;
+    cursor: default;
+}
+
+div#menu li {
+    padding-left: 6px;
+    padding-top: 14px;
+/*  padding-bottom: 10px; */
+    margin: 2px;
+    background-color: #222222;
+    color: #ffffff;
+    font-size: 10pt;
+    height: 50px;
+
+    border-radius:2px;
+
+    user-select: none;
+    -moz-user-select: none;
+    -khtml-user-select: none;
+    -webkit-user-select: none;
+    -o-user-select: none;
+    cursor: -webkit-grab;
+}
+
+div#menu li.addnew {
+    height: 24px;
+    text-align: center;
+    padding-top: 2px;
+    padding-left: 0px;
+    font-size: 14pt;
+
+    cursor: pointer;
 }

@@ -19,6 +19,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this.init_width = _this.width;
             _this.init_height = _this.height;
 
+            _this._menu_bar_width = '175px';
             _this._stat_hgt = 25
             _this.status = d3.select('#status');
             _this.status.style('height', _this._stat_hgt).style('top', _this.height - _this._stat_hgt)
@@ -114,15 +115,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this.draw_order[ilyr].draw(zoom_matrix);
             }
         };
-/*
-        this.add_level2 = function(l2_file) {
-            var gl = _this.map.node().getContext('webgl');
-            _this.set_status(stat_str);
 
-            _this.draw_order.unshift(new Level2Layer(gl, _this.map_proj, l2_file));
-            _this.draw();
-        };
-*/
         this.set_status = function(stat_txt) {
             var elem = _this.status.select('p');
             elem.text(stat_txt);
@@ -169,6 +162,12 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 for (var ilyr = _this.draw_order.length - 1; ilyr > -1; ilyr--) {
                     _this.draw_order[ilyr].layer_menu(ul);
                 }
+
+                var width = parseInt(_this._menu_bar_width, 10) - 10;
+                ul.selectAll('li').style('width', width + 'px');
+                ul.selectAll('li').call(d3.drag().on('start', _this._drag_layers));
+
+                ul.append('li').html('+').attr('class', 'addnew').on('click', function() { _this._add_menu(this); });
             },
             'default': function() {
                 _this.menu.html("");
@@ -177,16 +176,83 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
         this.toggle_menu_bar = function() {
             var trans = d3.transition().duration(500);
-            var bar_width = '150px';
             if (_this.menu_visible == "") {
-                _this.menu.style('width', bar_width).style('left', '-' + bar_width);
+                _this.menu.style('width', _this._menu_bar_width).style('left', '-' + _this._menu_bar_width);
                 _this.menu.transition(trans).style('left', '0px');
-                _this.menu_tabs.transition(trans).style('left', bar_width);
+                _this.menu_tabs.transition(trans).style('left', _this._menu_bar_width);
             }
             else {
-                _this.menu.transition(trans).style('left', '-' + bar_width);
+                _this.menu.transition(trans).style('left', '-' + _this._menu_bar_width);
                 _this.menu_tabs.transition(trans).style('left', '0px');
             }
+        };
+
+        this._drag_layers = function() {
+            var lyr_marker = d3.select(this);
+            var lyr_parent = d3.select(this.parentNode);
+
+            var lyr_index;
+            var lyr_coords = [];
+            for (var lyr of this.parentNode.childNodes.entries()) {
+                var lyr_rect = lyr[1].getBoundingClientRect();
+                if (lyr[1].className != "addnew") {
+                    lyr_coords[lyr[0]] = (lyr_rect.top + lyr_rect.bottom) / 2;
+                }
+                if (lyr[1] == this) {
+                    lyr_index = lyr[0];
+                }
+            }
+
+            var lyr_spacer = d3.select(this.cloneNode(false)).style('visibility', 'hidden').node();
+            this.parentNode.insertBefore(lyr_spacer, this.parentNode.childNodes[lyr_index + 1]);
+
+            var mkr_pos = this.getBoundingClientRect();
+            var dx = d3.event.x - mkr_pos.left;
+            var dy = d3.event.y - mkr_pos.top;
+
+            lyr_marker.style('position', 'absolute').style('left', mkr_pos.left).style('top', mkr_pos.top);
+
+            function dragged(d) {
+                lyr_marker.style('left', d3.event.x - dx).style('top', d3.event.y - dy);
+                var mkr_pos = this.getBoundingClientRect();
+                if (lyr_index > 0 && mkr_pos.top < lyr_coords[lyr_index - 1]) {
+                    var swap_node = this.parentNode.childNodes[lyr_index - 1];
+                    this.parentNode.removeChild(swap_node);
+                    this.parentNode.insertBefore(swap_node, this.parentNode.childNodes[lyr_index + 1]);
+
+                    var n_layers = _this.draw_order.length;
+                    var swap_lyr = _this.draw_order[n_layers - (lyr_index - 1) - 1];
+                    _this.draw_order.splice(n_layers - (lyr_index - 1) - 1, 1);
+                    _this.draw_order.splice(n_layers - lyr_index - 1, 0, swap_lyr);
+                    _this.draw()
+
+                    lyr_index--;
+                }
+                else if (lyr_index < lyr_coords.length - 1 && mkr_pos.bottom > lyr_coords[lyr_index + 1]) {
+                    var swap_node = this.parentNode.childNodes[lyr_index + 2];
+                    this.parentNode.removeChild(swap_node);
+                    this.parentNode.insertBefore(swap_node, this.parentNode.childNodes[lyr_index]);
+
+                    var n_layers = _this.draw_order.length;
+                    var swap_lyr = _this.draw_order[n_layers - (lyr_index + 1) - 1];
+                    _this.draw_order.splice(n_layers - (lyr_index + 1) - 1, 1);
+                    _this.draw_order.splice(n_layers - (lyr_index) - 1, 0, swap_lyr);
+                    _this.draw()
+
+                    lyr_index++;
+                }
+            }
+
+            function dragend() {
+                this.parentNode.removeChild(lyr_spacer);
+                lyr_marker.style('position', 'static');
+            }
+
+            d3.event.on('drag', dragged).on('end', dragend);
+        };
+
+        this._add_menu = function(root) {
+            console.log('Popup menu!');
         };
     };
 
@@ -197,9 +263,14 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this._gl = gl;
             _this._callbacks = {};
 
-            _this._pos = gl.getAttribLocation(ShapeLayer._shader_prog, 'a_pos');
+            _this.cls = cls
+            _this.name = name
+
+            _this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+            _this._pos = gl.getAttribLocation(_this._shader_prog, 'a_pos');
             _this._posbuf = gl.createBuffer();
-            _this._zoom = gl.getUniformLocation(ShapeLayer._shader_prog, 'u_zoom');
+            _this._zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
+            _this._delta = gl.getUniformLocation(_this._shader_prog, 'u_delta');
 
             _this._proj_data = [];
             var tag = sprintf('shapefile.%s.%s', cls, name);
@@ -233,7 +304,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
 
             gl = _this._gl;
-            gl.useProgram(ShapeLayer._shader_prog);
+            gl.useProgram(_this._shader_prog);
             gl.enableVertexAttribArray(_this._pos);
             gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
             gl.vertexAttribPointer(_this._pos, 2, gl.FLOAT, false, 0, 0);
@@ -244,7 +315,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
 
         this.layer_menu = function(root) {
-
+            var names = {'us_cty':'Geography:<br>US Counties', 'us_st':'Geography:<br>US States'};
+            var readable_name = names[_this.name];
+            root.append('li').html(readable_name);
         };
 
         this.set_map_projection = function(map_proj){
@@ -273,7 +346,6 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        ShapeLayer._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
         this.init(gl, cls, name);
     };
 
@@ -283,6 +355,10 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         this.init = function(gl, site, field, elev) {
             _this._gl = gl;
             _this._callbacks = {};
+
+            _this.site = site;
+            _this.field = field;
+            _this.elev = elev;
 
             _this._pos = gl.getAttribLocation(Level2Layer._shader_prog, 'a_pos');
             _this._posbuf = gl.createBuffer();
@@ -401,7 +477,8 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
 
         this.layer_menu = function(root) {
-            
+            var readable_name = sprintf("Level 2 Radar:<br>%s %.1f\u00b0 %s", _this.site, _this.elev, _this.field);
+            root.append('li').html(readable_name);
         };
 
         this.set_map_projection = function(map_proj){
