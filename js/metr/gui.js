@@ -538,7 +538,10 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             uniform sampler2D u_tex;
 
             void main() {
-                gl_FragColor = texture2D(u_tex, v_tex);
+                vec4 color = texture2D(u_tex, v_tex);
+                if (color.a < 0.5)
+                    discard;
+                gl_FragColor = color;
             }
         `;
 
