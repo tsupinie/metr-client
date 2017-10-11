@@ -260,105 +260,24 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         };
 
         this._add_menu = function(root) {
-            console.log('Popup menu!');
+//          d3.select('#menu').append('div').position('absolute')
         };
     };
 
+    this.DataLayer = function(gl) {
+        this._gl = gl;
+        this._callbacks = {};
+    };
+
+    this.DataLayer.prototype.set_map_projection = function(map_proj){
+        this.map_proj = map_proj;
+    };
+ 
+    this.DataLayer.prototype.register_callback = function(action, cb) {
+        this._callbacks[action] = cb;
+    };
+
     this.ShapeLayer = function(gl, cls, name) {
-        var _this = this;
-
-        this.init = function(gl, cls, name) {
-            _this._gl = gl;
-            _this._callbacks = {};
-
-            _this.cls = cls
-            _this.name = name
-
-            _this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
-            _this._pos = gl.getAttribLocation(_this._shader_prog, 'a_pos');
-            _this._posbuf = gl.createBuffer();
-            _this._zoom = gl.getUniformLocation(_this._shader_prog, 'u_zoom');
-            _this._delta = gl.getUniformLocation(_this._shader_prog, 'u_delta');
-            _this.set_linewidth(1);
-
-            _this._proj_data = [];
-            var tag = sprintf('shapefile.%s.%s', cls, name);
-            io.register_handler(tag, _this.receive_data);
-            io.request({'type':'shapefile', 'domain':cls, 'name':name});
-        };
-
-        this.receive_data = function(shp_file) {
-            _this._proj_data = [];
-            var ipp = 0;
-            for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
-                if (isNaN(shp_file.data[ipt])) {
-                    _this._proj_data[ipp] = NaN;
-                    _this._proj_data[ipp + 1] = NaN;
-                }
-                else {
-                    var raw_pt = [shp_file.data[ipt], shp_file.data[ipt + 1]];
-                    var proj_pt = _this.map_proj(raw_pt);
-                    _this._proj_data[ipp] = proj_pt[0];
-                    _this._proj_data[ipp + 1] = proj_pt[1];
-                    ipt++;
-                }
-                ipp += 2;
-            }
-            _this._callbacks['redraw']();
-        };
-
-        this.draw = function(zoom_matrix, zoom_fac) {
-            if (_this._proj_data == []) {
-                return;
-            }
-
-            gl = _this._gl;
-            gl.useProgram(_this._shader_prog);
-            gl.enableVertexAttribArray(_this._pos);
-            gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
-            gl.vertexAttribPointer(_this._pos, 2, gl.FLOAT, false, 0, 0);
-            gl.uniformMatrix3fv(_this._zoom, false, zoom_matrix);
-
-            for (ivec in _this._delta_vectors) {
-                vec = _this._delta_vectors[ivec];
-
-                gl.uniform2f(_this._delta, vec[0] / zoom_fac, vec[1] / zoom_fac); 
-                gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._proj_data), gl.DYNAMIC_DRAW);
-                gl.drawArrays(gl.LINE_STRIP, 0, _this._proj_data.length / 2);
-            }
-        };
-
-        this.layer_menu = function(root) {
-            var names = {'us_cty':'Geography:<br>US Counties', 'us_st':'Geography:<br>US States'};
-            var readable_name = names[_this.name];
-            root.append('li').html(readable_name);
-        };
-
-        this.set_map_projection = function(map_proj){
-            _this.map_proj = map_proj;
-        };
-
-        this.set_linewidth = function(linewidth) {
-            _this.linewidth = linewidth;
-            _this._delta_vectors = _this._compute_delta_vectors(_this.linewidth);
-        };
-
-        this.register_callback = function(action, cb) {
-            _this._callbacks[action] = cb;
-        };
-
-        this._compute_delta_vectors = function(linewidth) {
-            /* This will not be general. In the future, will probably have to actually do poly-lines. */
-            var vecs;
-            if (linewidth == 1) {
-                vecs = [[0, 0]];
-            }
-            else if (linewidth == 2) {
-                vecs = [[0.5, 0.5], [0.5, -0.5], [-0.5, -0.5], [0.5, -0.5]];
-            }
-            return vecs
-        };
-
         var _vert_shader_src = `
             attribute vec2 a_pos;
             uniform vec2 u_delta;
@@ -378,143 +297,93 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        this.init(gl, cls, name);
+        this._gl = gl;
+        this.cls = cls;
+        this.name = name;
+
+        this._callbacks = {};
+
+        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
+        this._posbuf = gl.createBuffer();
+        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
+        this._delta = gl.getUniformLocation(this._shader_prog, 'u_delta');
+        this.set_linewidth(1);
+
+        this._proj_data = [];
+        var tag = sprintf('shapefile.%s.%s', cls, name);
+        io.register_handler(tag, this.receive_data.bind(this));
+        io.request({'type':'shapefile', 'domain':cls, 'name':name});
+    };
+
+    this.ShapeLayer.prototype = Object.create(this.DataLayer.prototype);
+    this.ShapeLayer.prototype.constructor = this.ShapeLayer;
+
+    this.ShapeLayer.prototype.receive_data = function(shp_file) {
+        this._proj_data = [];
+        var ipp = 0;
+        for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
+            if (isNaN(shp_file.data[ipt])) {
+                this._proj_data[ipp] = NaN;
+                this._proj_data[ipp + 1] = NaN;
+            }
+            else {
+                var raw_pt = [shp_file.data[ipt], shp_file.data[ipt + 1]];
+                var proj_pt = this.map_proj(raw_pt);
+                this._proj_data[ipp] = proj_pt[0];
+                this._proj_data[ipp + 1] = proj_pt[1];
+                ipt++;
+            }
+            ipp += 2;
+        }
+        this._callbacks['redraw']();
+    };
+
+    this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+        if (this._proj_data == []) {
+            return;
+        }
+
+        var gl = this._gl;
+        gl.useProgram(this._shader_prog);
+        gl.enableVertexAttribArray(this._pos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
+        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
+
+        for (ivec in this._delta_vectors) {
+            vec = this._delta_vectors[ivec];
+
+            gl.uniform2f(this._delta, vec[0] / zoom_fac, vec[1] / zoom_fac); 
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._proj_data), gl.DYNAMIC_DRAW);
+            gl.drawArrays(gl.LINE_STRIP, 0, this._proj_data.length / 2);
+        }
+    };
+
+    this.ShapeLayer.prototype.layer_menu = function(root) {
+        var names = {'us_cty':'Geography:<br>US Counties', 'us_st':'Geography:<br>US States'};
+        var readable_name = names[this.name];
+        root.append('li').html(readable_name);
+    };
+
+    this.ShapeLayer.prototype.set_linewidth = function(linewidth) {
+        this.linewidth = linewidth;
+        this._delta_vectors = this._compute_delta_vectors(this.linewidth);
+    };
+
+    this.ShapeLayer.prototype._compute_delta_vectors = function(linewidth) {
+        /* This will not be general. In the future, will probably have to actually do poly-lines. */
+        var vecs;
+        if (linewidth == 1) {
+            vecs = [[0, 0]];
+        }
+        else if (linewidth == 2) {
+            vecs = [[0.5, 0.5], [0.5, -0.5], [-0.5, -0.5], [0.5, -0.5]];
+        }
+        return vecs
     };
 
     this.Level2Layer = function(gl, site, field, elev) {
-        var _this = this;
-
-        this.init = function(gl, site, field, elev) {
-            _this._gl = gl;
-            _this._callbacks = {};
-
-            _this.site = site;
-            _this.field = field;
-            _this.elev = elev;
-
-            _this._pos = gl.getAttribLocation(Level2Layer._shader_prog, 'a_pos');
-            _this._posbuf = gl.createBuffer();
-            _this._texc = gl.getAttribLocation(Level2Layer._shader_prog, 'a_tex');
-            _this._texcbuf = gl.createBuffer();
-            _this._tex = gl.getUniformLocation(Level2Layer._shader_prog, 'u_tex');
-            _this._zoom = gl.getUniformLocation(Level2Layer._shader_prog, 'u_zoom');
-            _this._rdr = gl.getUniformLocation(Level2Layer._shader_prog, 'u_rdr_pos');
-
-            var int_deg = Math.floor(elev);
-            var frc_deg = Math.round((elev - int_deg) * 10);
-            var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
-            io.register_handler(tag, _this.receive_data);
-            io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':elev});
-        };
-
-        this.receive_data = function(l2_file) {
-            _this._l2_file = l2_file
-            _this._rdr_loc = _this.map_proj([l2_file.site_longitude, l2_file.site_latitude]);
-            var start_loc = _this.map_proj([l2_file.first_longitude, l2_file.first_latitude]);
-
-            var rdr_px = _this._rdr_loc;
-            var start_px = start_loc;
-
-            var st_rn = Math.sqrt((start_px[0] - rdr_px[0]) ** 2 + (start_px[1] - rdr_px[1]) ** 2);
-            var st_az = Math.atan2(start_px[1] - rdr_px[1], start_px[0] - rdr_px[0]) * 180 / Math.PI;
-            var drng = l2_file.drng * st_rn / l2_file.st_range;
-            var dazim = l2_file.dazim;
-            var tex_size_x = l2_file.n_gates;
-            var tex_size_y = l2_file.n_rays;
-
-            var ipt = 0;
-            _this._pts = [];
-            _this._tex_coords = [];
-            for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz++) {
-                _this._pts[ipt + 0] = (st_rn + (l2_file.n_gates + 0.5) * drng);
-                _this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
-                _this._pts[ipt + 2] = (st_rn - 0.5 * drng);
-                _this._pts[ipt + 3] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
-
-                _this._tex_coords[ipt + 0] = l2_file.n_gates / tex_size_x;
-                _this._tex_coords[ipt + 1] = iaz / tex_size_y;
-                _this._tex_coords[ipt + 2] = 0.0;
-                _this._tex_coords[ipt + 3] = iaz / tex_size_y;
-
-                ipt += 4;
-            }
-
-            var refl_img = [];
-            var ipt = 0;
-            for (var iaz = 0; iaz < tex_size_y; iaz++) {
-                for (var irn = 0; irn < tex_size_x; irn++) {
-                    var igt = l2_file.n_gates * iaz + irn;
-                    var color = _this._reflectivity_color_map(l2_file.data[igt]);
-                    refl_img[ipt + 0] = color[0];
-                    refl_img[ipt + 1] = color[1];
-                    refl_img[ipt + 2] = color[2];
-                    refl_img[ipt + 3] = color[3];
-                    ipt += 4;
-                }
-            }
-
-            var gl = _this._gl;
-            _this._rdr_tex = gl.createTexture();
-            gl.bindTexture(gl.TEXTURE_2D, _this._rdr_tex);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_size_x, tex_size_y, 0, gl.RGBA, 
-                          gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
-
-            _this._callbacks['redraw']();
-
-            var time_parse = d3.timeParse("%Y%m%d_%H%M");
-            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
-            var time_str = time_fmt(time_parse(_this._l2_file.timestamp))
-            var stat_str = sprintf("%s %.1f\u00b0 %s (%s)", _this._l2_file.site, _this._l2_file.elevation, _this._l2_file.field, time_str);
-
-            _this._callbacks['status'](stat_str);
-        };
-
-        this.draw = function(zoom_matrix, zoom_fac) {
-            if (_this._l2_file === undefined) {
-                return;
-            }
-
-            gl = _this._gl;
-            gl.useProgram(Level2Layer._shader_prog);
-
-            gl.enableVertexAttribArray(_this._pos);
-            gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
-            gl.vertexAttribPointer(_this._pos, 2, gl.FLOAT, false, 0, 0);
-
-            gl.enableVertexAttribArray(_this._texc);
-            gl.bindBuffer(gl.ARRAY_BUFFER, _this._texcbuf);
-            gl.vertexAttribPointer(_this._texc, 2, gl.FLOAT, false, 0, 0);
-
-            gl.uniformMatrix3fv(_this._zoom, false, zoom_matrix);
-            gl.uniform2f(_this._rdr, _this._rdr_loc[0], _this._rdr_loc[1]);
-
-            gl.bindBuffer(gl.ARRAY_BUFFER, _this._texcbuf);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._tex_coords), gl.DYNAMIC_DRAW);
-
-            gl.uniform1i(_this._tex, 0);
-
-            gl.bindBuffer(gl.ARRAY_BUFFER, _this._posbuf);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(_this._pts), gl.DYNAMIC_DRAW);
-            gl.drawArrays(gl.TRIANGLE_STRIP, 0, _this._pts.length / 2);
-        };
-
-        this.layer_menu = function(root) {
-            var readable_name = sprintf("Level 2 Radar:<br>%s %.1f\u00b0 %s", _this.site, _this.elev, _this.field);
-            root.append('li').html(readable_name);
-        };
-
-        this.set_map_projection = function(map_proj){
-            _this.map_proj = map_proj;
-        };
-
-        this.register_callback = function(action, cb) {
-            _this._callbacks[action] = cb;
-        };
-
         var _vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_tex;
@@ -545,31 +414,153 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             }
         `;
 
-        Level2Layer._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+        this._gl = gl;
+        this._callbacks = {};
 
-        this._reflectivity_color_map = function(ref) {
-            var color;
-            if (ref < 5) { color = [0, 0, 0, 0]; }
-            else if (ref >= 5  && ref < 10) { color = [0,   236, 236, 255]; }
-            else if (ref >= 10 && ref < 15) { color = [1,   160, 246, 255]; }
-            else if (ref >= 15 && ref < 20) { color = [0,   255, 246, 255]; }
-            else if (ref >= 20 && ref < 25) { color = [0,   200, 0,   255]; }
-            else if (ref >= 25 && ref < 30) { color = [0,   144, 0,   255]; }
-            else if (ref >= 30 && ref < 35) { color = [255, 255, 0,   255]; }
-            else if (ref >= 35 && ref < 40) { color = [243, 192, 0,   255]; }
-            else if (ref >= 40 && ref < 45) { color = [255, 144, 0,   255]; }
-            else if (ref >= 45 && ref < 50) { color = [255, 0,   0,   255]; }
-            else if (ref >= 50 && ref < 55) { color = [214, 0,   0,   255]; }
-            else if (ref >= 55 && ref < 60) { color = [192, 0,   0,   255]; }
-            else if (ref >= 60 && ref < 65) { color = [255, 0,   255, 255]; }
-            else if (ref >= 65 && ref < 70) { color = [153, 85,  201, 255]; }
-            else if (ref >= 70 && ref < 75) { color = [0,   0,   0,   255]; }
-            else { color = [0, 0, 0, 0]; }
-            return color;
+        this.site = site;
+        this.field = field;
+        this.elev = elev;
+
+        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+
+        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
+        this._posbuf = gl.createBuffer();
+        this._texc = gl.getAttribLocation(this._shader_prog, 'a_tex');
+        this._texcbuf = gl.createBuffer();
+        this._tex = gl.getUniformLocation(this._shader_prog, 'u_tex');
+        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
+        this._rdr = gl.getUniformLocation(this._shader_prog, 'u_rdr_pos');
+
+        var int_deg = Math.floor(elev);
+        var frc_deg = Math.round((elev - int_deg) * 10);
+        var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
+        io.register_handler(tag, this.receive_data.bind(this));
+        io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':elev});
+    };
+
+    this.Level2Layer.prototype = Object.create(this.DataLayer.prototype);
+    this.Level2Layer.prototype.constructor = this.Level2Layer;
+
+    this.Level2Layer.prototype.receive_data = function(l2_file) {
+        this._l2_file = l2_file
+        this._rdr_loc = this.map_proj([l2_file.site_longitude, l2_file.site_latitude]);
+        var start_loc = this.map_proj([l2_file.first_longitude, l2_file.first_latitude]);
+
+        var rdr_px = this._rdr_loc;
+        var start_px = start_loc;
+
+        var st_rn = Math.sqrt((start_px[0] - rdr_px[0]) ** 2 + (start_px[1] - rdr_px[1]) ** 2);
+        var st_az = Math.atan2(start_px[1] - rdr_px[1], start_px[0] - rdr_px[0]) * 180 / Math.PI;
+        var drng = l2_file.drng * st_rn / l2_file.st_range;
+        var dazim = l2_file.dazim;
+        var tex_size_x = l2_file.n_gates;
+        var tex_size_y = l2_file.n_rays;
+
+        var ipt = 0;
+        this._pts = [];
+        this._tex_coords = [];
+        for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz++) {
+            this._pts[ipt + 0] = (st_rn + (l2_file.n_gates + 0.5) * drng);
+            this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
+            this._pts[ipt + 2] = (st_rn - 0.5 * drng);
+            this._pts[ipt + 3] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
+
+            this._tex_coords[ipt + 0] = l2_file.n_gates / tex_size_x;
+            this._tex_coords[ipt + 1] = iaz / tex_size_y;
+            this._tex_coords[ipt + 2] = 0.0;
+            this._tex_coords[ipt + 3] = iaz / tex_size_y;
+
+            ipt += 4;
         }
 
-        this.init(gl, site, field, elev);
-    }
+        var refl_img = [];
+        var ipt = 0;
+        for (var iaz = 0; iaz < tex_size_y; iaz++) {
+            for (var irn = 0; irn < tex_size_x; irn++) {
+                var igt = l2_file.n_gates * iaz + irn;
+                var color = this._reflectivity_color_map(l2_file.data[igt]);
+                refl_img[ipt + 0] = color[0];
+                refl_img[ipt + 1] = color[1];
+                refl_img[ipt + 2] = color[2];
+                refl_img[ipt + 3] = color[3];
+                ipt += 4;
+            }
+        }
+
+        var gl = this._gl;
+        this._rdr_tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this._rdr_tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_size_x, tex_size_y, 0, gl.RGBA, 
+                      gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
+
+        this._callbacks['redraw']();
+
+        var time_parse = d3.timeParse("%Y%m%d_%H%M");
+        var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
+        var time_str = time_fmt(time_parse(this._l2_file.timestamp))
+        var stat_str = sprintf("%s %.1f\u00b0 %s (%s)", this._l2_file.site, this._l2_file.elevation, this._l2_file.field, time_str);
+
+        this._callbacks['status'](stat_str);
+    };
+
+    this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
+        if (this._l2_file === undefined) {
+            return;
+        }
+
+        gl = this._gl;
+        gl.useProgram(this._shader_prog);
+
+        gl.enableVertexAttribArray(this._pos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
+
+        gl.enableVertexAttribArray(this._texc);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
+        gl.vertexAttribPointer(this._texc, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
+        gl.uniform2f(this._rdr, this._rdr_loc[0], this._rdr_loc[1]);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._tex_coords), gl.DYNAMIC_DRAW);
+
+        gl.uniform1i(this._tex, 0);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._pts), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, this._pts.length / 2);
+    };
+
+    this.Level2Layer.prototype.layer_menu = function(root) {
+        var readable_name = sprintf("Level 2 Radar:<br>%s %.1f\u00b0 %s", this.site, this.elev, this.field);
+        root.append('li').html(readable_name);
+    };
+
+    this.Level2Layer.prototype._reflectivity_color_map = function(ref) {
+        var color;
+        if (ref < 5) { color = [0, 0, 0, 0]; }
+        else if (ref >= 5  && ref < 10) { color = [0,   236, 236, 255]; }
+        else if (ref >= 10 && ref < 15) { color = [1,   160, 246, 255]; }
+        else if (ref >= 15 && ref < 20) { color = [0,   255, 246, 255]; }
+        else if (ref >= 20 && ref < 25) { color = [0,   200, 0,   255]; }
+        else if (ref >= 25 && ref < 30) { color = [0,   144, 0,   255]; }
+        else if (ref >= 30 && ref < 35) { color = [255, 255, 0,   255]; }
+        else if (ref >= 35 && ref < 40) { color = [243, 192, 0,   255]; }
+        else if (ref >= 40 && ref < 45) { color = [255, 144, 0,   255]; }
+        else if (ref >= 45 && ref < 50) { color = [255, 0,   0,   255]; }
+        else if (ref >= 50 && ref < 55) { color = [214, 0,   0,   255]; }
+        else if (ref >= 55 && ref < 60) { color = [192, 0,   0,   255]; }
+        else if (ref >= 60 && ref < 65) { color = [255, 0,   255, 255]; }
+        else if (ref >= 65 && ref < 70) { color = [153, 85,  201, 255]; }
+        else if (ref >= 70 && ref < 75) { color = [0,   0,   0,   255]; }
+        else { color = [0, 0, 0, 0]; }
+        return color;
+    };
 
     this.compile_shaders = function(gl, vert_shader_src, frag_shader_src) {
         var compile_shader = function(type, src) {
