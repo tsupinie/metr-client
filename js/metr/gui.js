@@ -47,24 +47,19 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
             var gl = _this.map.node().getContext('webgl');
 
-            var shp_layer = new ShapeLayer(gl, 'geo', 'us_cty');
-            shp_layer.set_map_projection(_this.map_proj);
-            shp_layer.register_callback('redraw', _this.draw);
-            shp_layer.register_callback('status', _this.set_status);
-            _this.draw_order.push(shp_layer);
+            _this.add_layer(0, ShapeLayer, 'geo', 'us_cty');
+            _this.add_layer(0, ShapeLayer, 'geo', 'us_st');
+            _this.add_layer(-1, Level2Layer, 'KBHX', 'REF', 0.5);
 
-            shp_layer = new ShapeLayer(gl, 'geo', 'us_st');
-            shp_layer.set_map_projection(_this.map_proj);
-            shp_layer.set_linewidth(2);
-            shp_layer.register_callback('redraw', _this.draw);
-            shp_layer.register_callback('status', _this.set_status);
-            _this.draw_order.push(shp_layer);
-
-            var l2_layer = new Level2Layer(gl, 'KTLX', 'REF', 0.5);
-            l2_layer.set_map_projection(_this.map_proj);
-            l2_layer.register_callback('redraw', _this.draw);
-            l2_layer.register_callback('status', _this.set_status);
-            _this.draw_order.unshift(l2_layer);
+            d3.json('trebuchet.atlas', function(atlas) {
+                var texture_data = atlas.texture;
+                atlas.texture = new Image();
+                atlas.texture.onload = function(event) {
+                    _mod.font_atlas = new FontAtlas(atlas);
+                    _this.add_layer(0, ObsLayer, 'awos');
+                }
+                atlas.texture.src = 'data:image/png;base64,' + texture_data;
+            });
 
             window.addEventListener('resize', function() {
                 _this.map.node().width = window.innerWidth;
@@ -92,6 +87,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this.trans_y = -(_this.height - _this.init_height) / 2;
 
                 _this.set_zoom(d3.zoomTransform(_this.map.node()));
+                for (ilyr in _this.draw_order) {
+                    _this.draw_order[ilyr].set_viewport(_this.width, _this.height);
+                }
                 _this.draw();
             });
 
@@ -123,6 +121,27 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this.draw_order[ilyr].draw(zoom_matrix, _this.zoom_trans.k);
             }
         };
+
+        this.add_layer = function(pos, LayerType) {
+            var args = Array.prototype.slice.call(arguments, 2);
+            var gl = _this.map.node().getContext('webgl');
+            args.splice(0, 0, gl);
+
+            var lyr = Object.create(LayerType.prototype);
+            LayerType.apply(lyr, args);
+
+            lyr.set_map_projection(_this.map_proj);
+            lyr.set_viewport(_this.width, _this.height);
+            lyr.register_callback('redraw', _this.draw);
+            lyr.register_callback('status', _this.set_status);
+
+            if (pos == -1) {
+                _this.draw_order.unshift(lyr);
+            }
+            else {
+                _this.draw_order.push(lyr);
+            }
+        }
 
         this.set_status = function(stat_txt) {
             var elem = _this.status.select('p');
@@ -277,6 +296,22 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         this._callbacks[action] = cb;
     };
 
+    this.DataLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+
+    };
+
+    this.DataLayer.prototype.layer_menu = function(root) {
+        root.append('li');
+    };
+
+    this.DataLayer.prototype.set_viewport = function(width, height) {
+        this._vp_width = width;
+        this._vp_height = height;
+    };
+
+   /********************
+    * ShapeLayer code
+    ********************/
     this.ShapeLayer = function(gl, cls, name) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
@@ -308,7 +343,13 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         this._posbuf = gl.createBuffer();
         this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
         this._delta = gl.getUniformLocation(this._shader_prog, 'u_delta');
-        this.set_linewidth(1);
+
+        if (name == 'us_st') {
+            this.set_linewidth(2);
+        }
+        else{
+            this.set_linewidth(1);
+        }
 
         this._proj_data = [];
         var tag = sprintf('shapefile.%s.%s', cls, name);
@@ -383,6 +424,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         return vecs
     };
 
+   /********************
+    * Level2Layer code
+    ********************/
     this.Level2Layer = function(gl, site, field, elev) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
@@ -530,6 +574,8 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._tex_coords), gl.DYNAMIC_DRAW);
 
         gl.uniform1i(this._tex, 0);
+        gl.activeTexture(gl.TEXTURE0);
+        gl.bindTexture(gl.TEXTURE_2D, this._rdr_tex);
 
         gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
         gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._pts), gl.DYNAMIC_DRAW);
@@ -546,7 +592,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         if (ref < 5) { color = [0, 0, 0, 0]; }
         else if (ref >= 5  && ref < 10) { color = [0,   236, 236, 255]; }
         else if (ref >= 10 && ref < 15) { color = [1,   160, 246, 255]; }
-        else if (ref >= 15 && ref < 20) { color = [0,   255, 246, 255]; }
+        else if (ref >= 15 && ref < 20) { color = [0,   150, 103, 255]; }
         else if (ref >= 20 && ref < 25) { color = [0,   200, 0,   255]; }
         else if (ref >= 25 && ref < 30) { color = [0,   144, 0,   255]; }
         else if (ref >= 30 && ref < 35) { color = [255, 255, 0,   255]; }
@@ -561,6 +607,450 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         else { color = [0, 0, 0, 0]; }
         return color;
     };
+
+   /********************
+    * ObsLayer code
+    ********************/
+    this.ObsLayer = function(gl, source) {
+        var _vert_shader_src = `
+            attribute vec2 a_pos;
+            attribute vec2 a_anch;
+            attribute vec2 a_tex;
+            uniform mat3 u_zoom;
+            uniform vec2 u_viewport;
+
+            varying vec2 v_tex;
+
+            void main() {
+                vec2 zoom_anch_pos = (vec3(a_anch, 1.0) * u_zoom).xy;
+                vec2 zoom_pos = zoom_anch_pos + a_pos / u_viewport;
+                gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
+
+                v_tex = a_tex;
+            }
+        `;
+
+        var _frag_shader_src = `
+            precision mediump float;
+
+            varying vec2 v_tex;
+            uniform sampler2D u_tex;
+            uniform vec3 u_fontcolor;
+
+            void main() {
+                vec4 color = texture2D(u_tex, v_tex);
+                if (color.a < 0.1)
+                    discard;
+                gl_FragColor = color * vec4(u_fontcolor, 1.0);
+            }
+        `;
+
+        this._gl = gl;
+        this.source = source;
+        this._callbacks = {};
+        this._n_bytes = 52;
+        this.obs_list = [];
+
+        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
+        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
+        this._posbuf = gl.createBuffer();
+        this._anch = gl.getAttribLocation(this._shader_prog, 'a_anch');
+        this._anchbuf = gl.createBuffer();
+        this._texc = gl.getAttribLocation(this._shader_prog, 'a_tex');
+        this._texcbuf = gl.createBuffer();
+        this._tex = gl.getUniformLocation(this._shader_prog, 'u_tex');
+        this._fontcolor = gl.getUniformLocation(this._shader_prog, 'u_fontcolor');
+        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
+        this._viewport = gl.getUniformLocation(this._shader_prog, 'u_viewport');
+
+        this._font_tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this._font_tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, _mod.font_atlas.get_texture());
+
+        this._barb_tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this._barb_tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+
+        this._text_from_ob = {
+            'id': function(ob) {
+                return ob.id;
+            },
+            'ta': function(ob) {
+                var tmpf = ob.temperature * 9. / 5 + 32;
+                var tmp_str;
+                if (isNaN(tmpf)) {
+                    tmp_str = ' '
+                }
+                else {
+                    tmp_str = Math.round(tmpf).toString();
+                }
+                return tmp_str;
+            },
+            'td': function(ob) {
+                var dwpf = ob.dewpoint * 9. / 5 + 32;
+                var dwp_str;
+                if (isNaN(dwpf)) {
+                    dwp_str = ' ';
+                }
+                else {
+                    dwp_str = Math.round(dwpf).toString()
+                }
+                return dwp_str;
+            },
+        };
+
+        this._text_fmt = {
+            'id': {'color': [0.9, 0.9, 0.9], 'align_h':'left', 'align_v':'top'},
+            'ta': {'color': [0.9, 0.0, 0.0], 'align_h':'right', 'align_v':'bottom'},
+            'td': {'color': [0.0, 0.8, 0.0], 'align_h':'right', 'align_v':'top'},
+        }
+
+        io.register_handler('obs.' + this.source, this.receive_data.bind(this));
+        io.request({'type':'obs', 'source':this.source});
+    };
+
+    this.ObsLayer.prototype = Object.create(this.DataLayer.prototype);
+    this.ObsLayer.prototype.constructor = this.ObsLayer;
+
+    this.ObsLayer.prototype.receive_data = function(obs) {
+        var n_obs = obs.data.length / this._n_bytes;
+
+        obs.data = new Uint8Array(obs.data.buffer);
+
+        this.obs_list = [];
+
+        this._text_info = {};
+        for (var obvar in this._text_from_ob) {
+            this._text_info[obvar] = {'anch': [], 'vert': [], 'tex': []};
+        }
+        this._barb_info = {'anch': [], 'vert': [], 'tex': []};
+
+        for (var iob = 0; iob < n_obs; iob++) {
+            var ob_buf = obs.data.slice(iob * this._n_bytes, (iob + 1) * this._n_bytes);
+            var ob = {};
+
+            var id = [];
+            for (var ibyte = 0; ibyte < 5; ibyte++) { id.push(String.fromCharCode(ob_buf[ibyte])); }
+            ob.id = id.join("");
+
+            var time = [];
+            for (var ibyte = 16; ibyte < 29; ibyte++) { time.push(String.fromCharCode(ob_buf[ibyte])); }
+            ob.time = time.join("");
+
+            var sec1 = new Float32Array(ob_buf.slice(8, 16).buffer);
+            var sec2 = new Float32Array(ob_buf.slice(32, 52).buffer);
+
+            ob.latitude    = sec1[0];
+            ob.longitude   = sec1[1];
+            var pos = this.map_proj([ob.longitude, ob.latitude]);
+            ob.x = pos[0];
+            ob.y = pos[1];
+            ob.pressure    = sec2[0];
+            ob.temperature = sec2[1];
+            ob.dewpoint    = sec2[2];
+            ob.wind_dir    = sec2[3];
+            ob.wind_spd    = sec2[4];
+
+            this.obs_list.push(ob);
+
+            for (var obvar in this._text_from_ob) {
+                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.x, ob.y], 13, 
+                                                     this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v']);
+                for (var txti in coords) {
+                    this._text_info[obvar][txti].push(coords[txti]);
+                }
+            }
+            var coords = this._gen_wind_barb([ob.x, ob.y], ob.wind_spd, ob.wind_dir);
+            for (var brbi in coords) {
+                this._barb_info[brbi].push(coords[brbi]);
+            }
+        }
+
+        for (var obvar in this._text_info) {
+            for (var txti in this._text_info[obvar]) {
+                this._text_info[obvar][txti] = [].concat.apply([], this._text_info[obvar][txti]);
+            }
+        }
+        for (var brbi in this._barb_info) {
+            this._barb_info[brbi] = [].concat.apply([], this._barb_info[brbi]);
+        }
+
+        this._callbacks['redraw']();
+    };
+
+    this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+        if (this.obs_list.length == 0) {
+            return;
+        }
+
+        var gl = this._gl;
+        gl.useProgram(this._shader_prog);
+
+        gl.enableVertexAttribArray(this._pos);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
+
+        gl.enableVertexAttribArray(this._anch);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
+        gl.vertexAttribPointer(this._anch, 2, gl.FLOAT, false, 0, 0);
+
+        gl.enableVertexAttribArray(this._texc);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
+        gl.vertexAttribPointer(this._texc, 2, gl.FLOAT, false, 0, 0);
+
+        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
+        gl.uniform2f(this._viewport, this._vp_width, this._vp_height);
+
+        gl.uniform1i(this._tex, 2);
+        gl.activeTexture(gl.TEXTURE2);
+        gl.bindTexture(gl.TEXTURE_2D, this._barb_tex);
+        
+        gl.uniform3f(this._fontcolor, 0, 0, 0);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['tex']), gl.DYNAMIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['anch']), gl.DYNAMIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['vert']), gl.DYNAMIC_DRAW);
+        gl.drawArrays(gl.TRIANGLES, 0, this._barb_info['vert'].length / 2);
+
+        gl.uniform1i(this._tex, 1);
+        gl.activeTexture(gl.TEXTURE1);
+        gl.bindTexture(gl.TEXTURE_2D, this._font_tex);
+
+        for (var obvar in this._text_info) {
+            var color = this._text_fmt[obvar]['color']
+            gl.uniform3f(this._fontcolor, color[0], color[1], color[2]);
+            gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['tex']), gl.DYNAMIC_DRAW);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['anch']), gl.DYNAMIC_DRAW);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
+            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['vert']), gl.DYNAMIC_DRAW);
+            gl.drawArrays(gl.TRIANGLES, 0, this._text_info[obvar]['vert'].length / 2);
+        }
+    };
+
+    this.ObsLayer.prototype.layer_menu = function(root) {
+        root.append('li').html("Surface Obs:<br>" + this.source.toUpperCase());
+    };
+
+    this.ObsLayer.prototype._gen_wind_barb = function(pos, wind_spd, wind_dir) {
+
+        var ws_rnd = Math.round(wind_spd / 5) * 5;
+        var n_flags = Math.floor(ws_rnd / 50);
+        ws_rnd = ws_rnd % 50;
+        var n_fbarbs = Math.floor(ws_rnd / 10);
+        ws_rnd = ws_rnd % 10;
+        var n_hbarbs = Math.floor(ws_rnd / 5);
+
+        var staff_length = 40;
+        var line_width = 1.5;
+        var feat_width = staff_length / 3;
+        var feat_space = staff_length / 8;
+        
+        var sqrt3 = Math.sqrt(3);
+        var coords = {'anch':[], 'vert':[], 'tex':[]};
+
+        var flag = [ [0, 0],  [0, -feat_space * 0.75], [feat_width, feat_width / sqrt3] ];
+        var barb = [ 
+            [0, 0],  [0, -2 * line_width / sqrt3], [feat_width, feat_width / sqrt3],
+            [0, -2 * line_width / sqrt3],  [feat_width, (feat_width - 2 * line_width) / sqrt3],  [feat_width, feat_width / sqrt3]
+        ];
+        var half_barb = [ 
+            [0, 0],  [0, -2 * line_width / sqrt3], [feat_width / 2, feat_width / (2 * sqrt3)],
+            [0, -2 * line_width / sqrt3],  [feat_width / 2, (feat_width / 2 - 2 * line_width) / sqrt3],  [feat_width / 2, feat_width / (2 * sqrt3)]
+        ];
+
+        var staff = [
+            [-line_width / 2, 0],  [line_width / 2, 0],  [line_width / 2, staff_length + 1 / sqrt3],
+            [-line_width / 2, 0],  [line_width / 2, staff_length + 1 / sqrt3],  [-line_width / 2, staff_length - 1 / sqrt3],
+        ];
+
+        if (n_flags > 0 || n_fbarbs > 0 || n_hbarbs > 0) {
+
+            for (var icd in staff) {
+                coords['vert'].push(staff[icd]);
+            }
+
+            var feat_pos = staff_length;
+            if (n_flags == 0 && n_fbarbs == 0) {
+                feat_pos -= feat_space;
+            }
+
+            for (var ifeat = 0; ifeat < n_flags; ifeat++) {
+                for (var icd in flag) {
+                    var pt = flag[icd].slice();
+                    pt[1] += feat_pos;
+                    coords['vert'].push(pt);
+                }
+                feat_pos -= feat_space;
+            }
+
+            for (var ifeat = 0; ifeat < n_fbarbs; ifeat++) {
+                for (var icd in barb) {
+                    var pt = barb[icd].slice();
+                    pt[1] += feat_pos;
+                    coords['vert'].push(pt);
+                }
+                feat_pos -= feat_space;
+            }
+
+            for (var ifeat = 0; ifeat < n_hbarbs; ifeat++) {
+                for (var icd in half_barb) {
+                    var pt = half_barb[icd].slice();
+                    pt[1] += feat_pos;
+                    coords['vert'].push(pt);
+                }
+                feat_pos -= feat_space;
+            }
+
+            var cs = Math.cos(-wind_dir * Math.PI / 180);
+            var sn = Math.sin(-wind_dir * Math.PI / 180);
+
+            for (var icd in coords['vert']) {
+                var pt = coords['vert'][icd];
+                var new_pt = [ pt[0] * cs - pt[1] * sn, pt[0] * sn + pt[1] * cs ];
+                coords['vert'][icd] = new_pt;
+            }
+        }
+        else {
+            var circ_rad = staff_length / 6;
+            var n_div = 16;
+            for (var isec = 0; isec < n_div; isec++) {
+                var r1 = circ_rad + line_width / 2;
+                var r2 = circ_rad - line_width / 2;
+                var th1 = isec * 2 * Math.PI / n_div;
+                var th2 = (isec + 1) * 2 * Math.PI / n_div;
+
+                coords['vert'].push([r1, th1]);
+                coords['vert'].push([r2, th1]);
+                coords['vert'].push([r1, th2]);
+                coords['vert'].push([r2, th1]);
+                coords['vert'].push([r2, th2]);
+                coords['vert'].push([r1, th2]);
+            }
+
+            for (var icd in coords['vert']) {
+                var pt = coords['vert'][icd];
+                var new_pt = [ pt[0] * Math.cos(pt[1]), pt[0] * Math.sin(pt[1]) ];
+                coords['vert'][icd] = new_pt;
+            }
+        }
+        coords['vert'] = [].concat.apply([], coords['vert']);
+
+        for (var icd in coords['vert']) {
+            coords['tex'].push(0.0);
+            if (!(icd % 2)) { coords['anch'].push(pos[0]); }
+            else            { coords['anch'].push(pos[1]); }
+        }
+        return coords;
+    };
+
+    this.FontAtlas = function(atlas) {
+        this._atlas = atlas;
+    };
+
+    this.FontAtlas.prototype.gen_char = function(chrc, chr_hgt) {
+        if (!this._atlas.glyphs.hasOwnProperty(chrc)) {
+            chrc = ' ';
+        }
+
+        var glyph_info = this._atlas.glyphs[chrc];
+        var img_wid = this._atlas.texture.width;
+        var img_hgt = this._atlas.texture.height;
+        var size_fac = chr_hgt / this._atlas.line_height;
+
+        var x1 = 0;
+        var y1 = 0; 
+        var x2 = (glyph_info.width) * size_fac;
+        var y2 = (this._atlas.glyph_height) * size_fac;
+
+        var verts = [
+            x1, y1,  x2, y1,  x1, y2,  x1, y2,  x2, y1,  x2, y2
+        ];
+
+        var x1 = glyph_info.xpos / img_wid;
+        var y1 = glyph_info.ypos / img_hgt;
+        var x2 = (glyph_info.xpos + glyph_info.width) / img_wid;
+        var y2 = (glyph_info.ypos + this._atlas.glyph_height) / img_hgt;
+
+        var tex_coords = [
+            x1, y1,  x2, y1,  x1, y2,  x1, y2,  x2, y1,  x2, y2
+        ];
+        return { 'vert':verts, 'tex':tex_coords };
+    };
+
+    this.FontAtlas.prototype.gen_str = function(str, pos, str_hgt, align_h, align_v) {
+        if (align_h === undefined) { align_h = 'left'; }
+        if (align_v === undefined) { align_v = 'top'; }
+
+        var chars = str.split('');
+        var verts = [];
+        var tex_coords = [];
+        var anchs = [];
+        var str_wid = 0;
+        for (ichr in chars) {
+            var coords = this.gen_char(chars[ichr], str_hgt);
+            for (icd in coords.vert) {
+                if (!(icd % 2)) { coords.vert[icd] += str_wid; }
+            }
+
+            for (icd in coords.vert) {
+                if (!(icd % 2)) { str_wid = Math.max(str_wid, coords.vert[icd]); }
+            }
+
+            for (var icd = 0; icd < coords.vert.length / 2; icd++) {
+                anchs.push(pos);
+            }
+
+            verts.push(coords.vert);
+            tex_coords.push(coords.tex);
+        }
+
+        anchs = [].concat.apply([], anchs)
+        verts = [].concat.apply([], verts)
+        tex_coords = [].concat.apply([], tex_coords)
+
+        var align_fac_h = -3;
+        var align_fac_v = -3;
+        if (align_h == 'right') {
+            align_fac_h = str_wid + 3;
+        }
+        else if (align_h == 'center') {
+            align_fac_h = str_wid / 2;
+        }
+
+        if (align_v == 'bottom') {
+            align_fac_v = str_hgt + 3;
+        }
+        else if (align_v == 'center') {
+            align_fac_v = str_hgt / 2;
+        }
+
+        for (icd in verts) {
+            if (!(icd % 2)) { verts[icd] = verts[icd] - align_fac_h; }
+            else { verts[icd] = -(verts[icd] - align_fac_v); }
+        }
+
+        return { 'anch':anchs, 'vert': verts, 'tex': tex_coords};
+    }
+
+    this.FontAtlas.prototype.get_texture = function() {
+        return this._atlas.texture;
+    }
 
     this.compile_shaders = function(gl, vert_shader_src, frag_shader_src) {
         var compile_shader = function(type, src) {
