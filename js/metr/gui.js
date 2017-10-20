@@ -864,7 +864,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         var sqrt3 = Math.sqrt(3);
         var coords = {'anch':[], 'vert':[], 'tex':[]};
 
-        var flag = [ [0, 0],  [0, -feat_space * 0.75], [feat_width, feat_width / sqrt3] ];
+        var flag = [ [0, 0],  [0, -feat_space * 1.25], [feat_width, feat_width / sqrt3] ];
         var barb = [ 
             [0, 0],  [0, -2 * line_width / sqrt3], [feat_width, feat_width / sqrt3],
             [0, -2 * line_width / sqrt3],  [feat_width, (feat_width - 2 * line_width) / sqrt3],  [feat_width, feat_width / sqrt3]
@@ -896,7 +896,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                     pt[1] += feat_pos;
                     coords['vert'].push(pt);
                 }
-                feat_pos -= feat_space;
+                feat_pos -= feat_space * 1.5;
             }
 
             for (var ifeat = 0; ifeat < n_fbarbs; ifeat++) {
