@@ -29,6 +29,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             _this.menu_tabs = d3.select('#menutabs');
             _this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
             _this.menu_visible = "";
+            _this._active_layer = undefined;
 
             _this.trans_x = 0;
             _this.trans_y = 0;
@@ -135,6 +136,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             lyr.set_viewport(_this.width, _this.height);
             lyr.register_callback('redraw', _this.draw);
             lyr.register_callback('status', _this.set_status);
+            lyr.active = false;
 
             if (pos == -1) {
                 _this.draw_order.unshift(lyr);
@@ -142,6 +144,8 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             else {
                 _this.draw_order.push(lyr);
             }
+
+            _this.activate_layer(lyr);
         }
 
         this.set_status = function(stat_txt) {
@@ -189,6 +193,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 var ul = _this.menu.append('ul');
                 for (var ilyr = _this.draw_order.length - 1; ilyr > -1; ilyr--) {
                     _this.draw_order[ilyr].layer_menu(ul);
+                    if (_this.draw_order[ilyr].active) {
+                        var n_layers = _this.draw_order.length;
+                        var lyr_marker = d3.select(ul.node().childNodes[n_layers - ilyr - 1]);
+                        lyr_marker.attr('class', 'active');
+                    }
                 }
 
                 var width = parseInt(_this._menu_bar_width, 10) - 10;
@@ -239,12 +248,16 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             this.parentNode.insertBefore(lyr_spacer, this.parentNode.childNodes[lyr_index + 1]);
 
             var mkr_pos = this.getBoundingClientRect();
-            var dx = d3.event.x - mkr_pos.left;
-            var dy = d3.event.y - mkr_pos.top;
+            var pad_left = 2;
+            var pad_top = 2
+            var dx = d3.event.x - mkr_pos.left + pad_left;
+            var dy = d3.event.y - mkr_pos.top + pad_left;
+            var moved = false;
 
-            lyr_marker.style('position', 'absolute').style('left', mkr_pos.left).style('top', mkr_pos.top);
+            lyr_marker.style('position', 'absolute').style('left', mkr_pos.left - pad_left).style('top', mkr_pos.top - pad_top);
 
             function dragged(d) {
+                moved = true;
                 lyr_marker.style('left', d3.event.x - dx).style('top', d3.event.y - dy);
                 var mkr_pos = this.getBoundingClientRect();
                 if (lyr_index > 0 && mkr_pos.top < lyr_coords[lyr_index - 1]) {
@@ -278,9 +291,28 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             function dragend() {
                 this.parentNode.removeChild(lyr_spacer);
                 lyr_marker.style('position', 'static');
+                if (!moved) {
+                    var n_layers = _this.draw_order.length;
+                    _this.activate_layer(_this.draw_order[n_layers - lyr_index - 1]);
+                }
             }
 
             d3.event.on('drag', dragged).on('end', dragend);
+        };
+
+        this.activate_layer = function(layer) {
+            if (_this._active_layer !== undefined) {
+                _this._active_layer.active = false;
+            }
+
+            layer.active = true;
+            _this._active_layer = layer;
+
+            if (_this.menu_visible.innerHTML == 'Layers') {
+                _this.show_menu['Layers']();
+            }
+
+            _this.set_status(layer.get_status());
         };
 
         this._add_menu = function(root) {
@@ -384,6 +416,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         }
         this._callbacks['redraw']();
     };
+
+    this.ShapeLayer.prototype.get_status = function() {
+        var names = {'us_cty': 'US County Boundaries', 'us_st': 'US State Boundaries'};
+        return names[this.name];
+    }
 
     this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
         if (this._proj_data == []) {
@@ -546,15 +583,24 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_size_x, tex_size_y, 0, gl.RGBA, 
                       gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
 
+        if (this.active) {
+            this._callbacks['status'](this.get_status());
+        }
         this._callbacks['redraw']();
-
-        var time_parse = d3.timeParse("%Y%m%d_%H%M");
-        var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
-        var time_str = time_fmt(time_parse(this._l2_file.timestamp))
-        var stat_str = sprintf("%s %.1f\u00b0 %s (%s)", this._l2_file.site, this._l2_file.elevation, this._l2_file.field, time_str);
-
-        this._callbacks['status'](stat_str);
     };
+
+    this.Level2Layer.prototype.get_status = function() {
+        if (this._l2_file !== undefined) {
+            var time_parse = d3.timeParse("%Y%m%d_%H%M");
+            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
+            var time_str = time_fmt(time_parse(this._l2_file.timestamp))
+            var stat = sprintf("%s %.1f\u00b0 %s (%s)", this._l2_file.site, this._l2_file.elevation, this._l2_file.field, time_str);
+        }
+        else {
+            var stat = sprintf("Downloading %s data ...", this.site);
+        }
+        return stat;
+    }
 
     this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
         if (this._l2_file === undefined) {
@@ -784,7 +830,24 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             this._barb_info[brbi] = [].concat.apply([], this._barb_info[brbi]);
         }
 
+        if (this.active) {
+            this._callbacks['status'](this.get_status());
+        }
         this._callbacks['redraw']();
+    };
+
+    this.ObsLayer.prototype.get_status = function() {
+        var names = {'metar':'METAR', 'mesonet':'Mesonet'};
+        if (this._obs_file !== undefined) {
+            var time_parse = d3.timeParse("%Y%m%d_%H%M");
+            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
+            var time_str = time_fmt(time_parse(this._obs_file.nominal_time))
+            var stat = sprintf("%s Station Plots (%s)", names[this.source], time_str);
+        }
+        else {
+            var stat = sprintf("Downloading %s data ...", names[this.source]);
+        }
+        return stat;
     };
 
     this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
