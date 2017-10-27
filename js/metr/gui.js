@@ -49,14 +49,15 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
             _this.add_layer(0, ShapeLayer, 'geo', 'us_cty');
             _this.add_layer(0, ShapeLayer, 'geo', 'us_st');
-            _this.add_layer(-1, Level2Layer, 'KBHX', 'REF', 0.5);
+            _this.add_layer(-1, Level2Layer, 'KTLX', 'REF', 0.5);
 
             d3.json('trebuchet.atlas', function(atlas) {
                 var texture_data = atlas.texture;
                 atlas.texture = new Image();
                 atlas.texture.onload = function(event) {
                     _mod.font_atlas = new FontAtlas(atlas);
-                    _this.add_layer(0, ObsLayer, 'awos');
+                    _this.add_layer(0, ObsLayer, 'metar');
+                    _this.add_layer(0, ObsLayer, 'mesonet');
                 }
                 atlas.texture.src = 'data:image/png;base64,' + texture_data;
             });
@@ -653,7 +654,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
         this.source = source;
         this._callbacks = {};
         this._n_bytes = 52;
-        this.obs_list = [];
+        this._obs_file = undefined;
 
         this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
         this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
@@ -725,11 +726,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
     this.ObsLayer.prototype.constructor = this.ObsLayer;
 
     this.ObsLayer.prototype.receive_data = function(obs) {
-        var n_obs = obs.data.length / this._n_bytes;
-
+        this._obs_file = obs;
         obs.data = new Uint8Array(obs.data.buffer);
-
-        this.obs_list = [];
+        var n_obs = obs.data.length / this._n_bytes;
 
         this._text_info = {};
         for (var obvar in this._text_from_ob) {
@@ -763,10 +762,8 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
             ob.wind_dir    = sec2[3];
             ob.wind_spd    = sec2[4];
 
-            this.obs_list.push(ob);
-
             for (var obvar in this._text_from_ob) {
-                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.x, ob.y], 13, 
+                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.x, ob.y], 12, 
                                                      this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v']);
                 for (var txti in coords) {
                     this._text_info[obvar][txti].push(coords[txti]);
@@ -791,7 +788,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
     };
 
     this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
-        if (this.obs_list.length == 0) {
+        if (this._obs_file === undefined) {
             return;
         }
 
@@ -930,7 +927,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 coords['vert'][icd] = new_pt;
             }
         }
-        else {
+        else if (isFinite(wind_spd)) {
             var circ_rad = staff_length / 6;
             var n_div = 16;
             for (var isec = 0; isec < n_div; isec++) {
@@ -952,6 +949,9 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 var new_pt = [ pt[0] * Math.cos(pt[1]), pt[0] * Math.sin(pt[1]) ];
                 coords['vert'][icd] = new_pt;
             }
+        }
+        else {
+            coords['vert'] = [];
         }
         coords['vert'] = [].concat.apply([], coords['vert']);
 
