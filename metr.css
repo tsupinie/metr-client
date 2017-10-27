@@ -30,10 +30,10 @@ div#menutabs {
     top: 0px;
     left: 0px;
 
-    -webkit-transform: rotate(-90deg) translate(-70px, -68px);
-    -moz-transform: rotate(-90deg) translate(-70px, -68px);
-    -ms-transform: rotate(-90deg) translate(-70px, -68px);
-    -o-transform: rotate(-90deg) translate(-70px, -68px);
+    -webkit-transform: rotate(-90deg) translate(-153px, -152.5px);
+    -moz-transform: rotate(-90deg) translate(-153px, -152.5px);
+    -ms-transform: rotate(-90deg) translate(-153px, -152.5px);
+    -o-transform: rotate(-90deg) translate(-153px, -152.5px);
 
     user-select: none;
     -moz-user-select: none;
@@ -107,4 +107,26 @@ div#menu li.addnew {
     font-size: 14pt;
 
     cursor: pointer;
+}
+
+div#menu div {
+    margin: 2px;
+    color: #ffffff;
+    font-size: 10pt;
+    background-color: #222222;
+
+    padding: 5px;
+
+    border-radius:2px;
+
+    user-select: none;
+    -moz-user-select: none;
+    -khtml-user-select: none;
+    -webkit-user-select: none;
+    -o-user-select: none;
+}
+
+div#menu h1 {
+    width: 100%;
+    text-align: center;
 }

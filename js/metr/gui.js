@@ -196,6 +196,10 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
                 ul.append('li').html('+').attr('class', 'addnew').on('click', function() { _this._add_menu(this); });
             },
+            'About': function() {
+                _this.menu.html("");
+                _this.menu.append('div').html('<h1>METR</h1>&copy; 2017 Tim Supinie');
+            },
             'default': function() {
                 _this.menu.html("");
             }
