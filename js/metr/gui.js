@@ -6,6 +6,34 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
     var gui = function() {
         var _this = this;
 
+        this._popup_menu = {
+            /* Come up with a better way to add the '>' than add a crap-ton of nbsp's ... */
+            'Geography&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;>': {
+                'US States': {
+                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_cty'); },
+                    'available':false,
+                },
+                'US Counties': {
+                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_st'); },
+                    'available':false,
+                },
+            },
+            'Level 2 Radar': {
+                'action': function() { console.log("Adding Level2 layer"); },
+                'available': true,
+            },
+            'Observations&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;>': {
+                'METAR': {
+                    'action':function() { _this.add_layer(0, ObsLayer, 'metar'); },
+                    'available': true,
+                },
+                'Mesonet': {
+                    'action': function() { _this.add_layer(0, ObsLayer, 'mesonet'); },
+                    'available': true,
+                },
+            },
+        };
+
         this.draw_order = [];
 
         this.init_map = function() {
@@ -57,8 +85,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 atlas.texture = new Image();
                 atlas.texture.onload = function(event) {
                     _mod.font_atlas = new FontAtlas(atlas);
-                    _this.add_layer(0, ObsLayer, 'metar');
-                    _this.add_layer(0, ObsLayer, 'mesonet');
                 }
                 atlas.texture.src = 'data:image/png;base64,' + texture_data;
             });
@@ -219,7 +245,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 ul.selectAll('li').style('width', width + 'px');
                 ul.selectAll('li').call(d3.drag().on('start', _this._drag_layers));
 
-                ul.append('li').html('+').attr('class', 'addnew').on('click', function() { _this._add_menu(this); });
+                ul.append('li').html('+').attr('class', 'addnew').on('click', function() {
+                    var root = d3.select(this).attr('depth', 0)
+                    root.node().options = _this._popup_menu;
+                    _this._add_menu(root); 
+                });
             },
             'About': function() {
                 _this.menu.html("");
@@ -331,7 +361,74 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         };
 
         this._add_menu = function(root) {
-//          d3.select('#menu').append('div').position('absolute')
+            var root_rect = root.node().getBoundingClientRect();
+
+            var width = parseInt(_this._menu_bar_width, 10);
+            menu_root = d3.select('#menu').append('ul')
+                                          .attr('id', 'popup' + root.attr('depth'))
+                                          .style('position', 'absolute')
+                                          .style('left', root_rect.left + width - 3)
+                                          .style('top', root_rect.top - 2 + root_rect.height / 3)
+                                          .style('width', root_rect.width)
+                                          .style('height', root_rect.height)
+                                          .style('margin-top', 0);
+            menu_root.node().menu_parent = root;
+
+            function remove_menu(depth) {
+                var sub_menu = d3.select('#menu #popup' + depth);
+                while (!sub_menu.empty()) {
+                    var sub_menu_root = sub_menu.node().menu_parent;
+                    sub_menu.remove();
+
+                    if (sub_menu_root !== undefined) {
+                        if (depth == 0) {
+                            sub_menu_root.on('click', function() { _this._add_menu(d3.select(this)); });
+                        }
+                        else {
+                            sub_menu_root.on('click', add_submenu);
+                        }
+                    }
+
+                    depth++;
+                    sub_menu = d3.select('#menu #popup' + depth);
+                }
+            }
+
+            function add_submenu() {
+                var li = d3.select(this);
+                var submenu = li.node().options;
+                if ('action' in submenu) {
+                    // Leaf node (run the menu action)
+                    if (submenu['available']) {
+                        submenu['action']();
+                        remove_menu(0);
+                        submenu['available'] = false;
+                    }
+                }
+                else {
+                    // Actual submenu (show the submenu)
+                    remove_menu(li.attr('depth'));
+                    _this._add_menu(li); 
+                }
+            }
+
+            for (var opt in root.node().options) {
+                menu_root.append('li')
+                         .style('height', '24px')
+                         .style('padding-top', '6px')
+                         .style('cursor', 'pointer')
+                         .html(opt)
+                         .attr('depth', parseInt(root.attr('depth')) + 1)
+                         .node().options = root.node().options[opt];
+            }
+
+            menu_root.selectAll('li').on('click', add_submenu);
+
+            root.on('click', function() {
+                var item = d3.select(this);
+                var item_depth = item.attr('depth');
+                remove_menu(item_depth);
+            });
         };
     };
 
