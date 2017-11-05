@@ -398,6 +398,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
     this.ShapeLayer.prototype.constructor = this.ShapeLayer;
 
     this.ShapeLayer.prototype.receive_data = function(shp_file) {
+        if (shp_file.error !== undefined) {
+            console.log('Server error: ' + shp_file.error);
+            return;
+        }
+
         this._proj_data = [];
         var ipp = 0;
         for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
@@ -528,6 +533,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
     this.Level2Layer.prototype.constructor = this.Level2Layer;
 
     this.Level2Layer.prototype.receive_data = function(l2_file) {
+        if (l2_file.error !== undefined) {
+            console.log('Server error: ' + l2_file.error);
+            return;
+        }
+
         this._l2_file = l2_file
         this._rdr_loc = this.map_proj([l2_file.site_longitude, l2_file.site_latitude]);
         var start_loc = this.map_proj([l2_file.first_longitude, l2_file.first_latitude]);
@@ -772,6 +782,11 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
     this.ObsLayer.prototype.constructor = this.ObsLayer;
 
     this.ObsLayer.prototype.receive_data = function(obs) {
+        if (obs.error !== undefined) {
+            console.log('Server error: ' + obs.error);
+            return;
+        }
+
         this._obs_file = obs;
         obs.data = new Uint8Array(obs.data.buffer);
         var n_obs = obs.data.length / this._n_bytes;

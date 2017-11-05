@@ -25,7 +25,10 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
 
             _this._ws.onmessage = function(event) {
                 var msg_json = JSON.parse(event.data);
-                msg_json.data = _this.decompress(msg_json.data);
+                if (msg_json.data !== undefined) {
+                    // Would be missing in the event of an error
+                    msg_json.data = _this.decompress(msg_json.data);
+                }
                 var handler = msg_json.handler;
                 var dt = d3.timeFormat("%d %b %Y %H:%M:%S")(new Date());
                 console.log(dt + ': Receiving data for ' + handler);
