@@ -1,5 +1,5 @@
 
-define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) {
+define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo, io, utils, sprintf) {
     var _mod = this;
     var sprintf = sprintf.sprintf;
 
@@ -95,10 +95,25 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
                 _this.draw();
             });
 
-            _this.map.call(d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom))
+            var trans = d3.zoomIdentity
+            if (utils.get_cookie('zoom_k') !== undefined) {
+                var zoom_k = utils.get_cookie('zoom_k');
+                var zoom_x = utils.get_cookie('zoom_x');
+                var zoom_y = utils.get_cookie('zoom_y');
+
+                trans = trans.translate(zoom_x, zoom_y).scale(zoom_k);
+            }
+
+            var zoom = d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom)
+            _this.map.call(zoom).call(zoom.transform, trans);
+
         };
 
         this.zoom = function() {
+            utils.set_cookie('zoom_k', d3.event.transform.k.toString());
+            utils.set_cookie('zoom_x', d3.event.transform.x.toString());
+            utils.set_cookie('zoom_y', d3.event.transform.y.toString());
+
             _this.set_zoom(d3.event.transform);
             _this.draw();
         };
@@ -249,7 +264,7 @@ define(['d3', 'd3-geo', 'metr/io', 'sprintf'], function(d3, d3geo, io, sprintf) 
 
             var mkr_pos = this.getBoundingClientRect();
             var pad_left = 2;
-            var pad_top = 2
+            var pad_top = 2;
             var dx = d3.event.x - mkr_pos.left + pad_left;
             var dy = d3.event.y - mkr_pos.top + pad_left;
             var moved = false;
