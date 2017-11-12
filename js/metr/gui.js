@@ -750,7 +750,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         for (var iaz = 0; iaz < tex_size_y; iaz++) {
             for (var irn = 0; irn < tex_size_x; irn++) {
                 var igt = l2_file.n_gates * iaz + irn;
-                var color = this._reflectivity_color_map(l2_file.data[igt]);
+                var color = this.color_maps[this.field](l2_file.data[igt]);
                 refl_img[ipt + 0] = color[0];
                 refl_img[ipt + 1] = color[1];
                 refl_img[ipt + 2] = color[2];
@@ -824,26 +824,40 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         return readable_name;
     };
 
-    this.Level2Layer.prototype._reflectivity_color_map = function(ref) {
-        var color;
-        if (ref < 5) { color = [0, 0, 0, 0]; }
-        else if (ref >= 5  && ref < 10) { color = [0,   236, 236, 255]; }
-        else if (ref >= 10 && ref < 15) { color = [1,   160, 246, 255]; }
-        else if (ref >= 15 && ref < 20) { color = [0,   150, 103, 255]; }
-        else if (ref >= 20 && ref < 25) { color = [0,   200, 0,   255]; }
-        else if (ref >= 25 && ref < 30) { color = [0,   144, 0,   255]; }
-        else if (ref >= 30 && ref < 35) { color = [255, 255, 0,   255]; }
-        else if (ref >= 35 && ref < 40) { color = [243, 192, 0,   255]; }
-        else if (ref >= 40 && ref < 45) { color = [255, 144, 0,   255]; }
-        else if (ref >= 45 && ref < 50) { color = [255, 0,   0,   255]; }
-        else if (ref >= 50 && ref < 55) { color = [214, 0,   0,   255]; }
-        else if (ref >= 55 && ref < 60) { color = [192, 0,   0,   255]; }
-        else if (ref >= 60 && ref < 65) { color = [255, 0,   255, 255]; }
-        else if (ref >= 65 && ref < 70) { color = [153, 85,  201, 255]; }
-        else if (ref >= 70 && ref < 75) { color = [0,   0,   0,   255]; }
-        else { color = [0, 0, 0, 0]; }
-        return color;
+    this.ColorMap = function(levels, colors) {
+        return function(level) {
+            this.levels = levels
+            this.colors = colors;
+            var color = [0, 0, 0, 0];
+            for (var ilv = 0; ilv < this.levels.length - 1; ilv++) {
+                if (this.levels[ilv] <= level && level < this.levels[ilv + 1]) {
+                    color = this.colors[ilv];
+                    break
+                }
+            }
+            return color;
+        };
     };
+
+    this.Level2Layer.prototype.color_maps = {
+        'REF': this.ColorMap(
+            [5,                  10,                   15,                   20,                   25, 
+             30,                 35,                   40,                   45,                   50, 
+             55,                 60,                   65,                   70,                   75],
+            [[0,   236, 236, 255], [1,   160, 246, 255], [0,   150, 103, 255], [0,   200, 0,   255], [0,   144, 0,   255],
+             [255, 255, 0,   255], [243, 192, 0,   255], [255, 144, 0,   255], [255, 0,   0,   255], [214, 0,   0,   255],
+             [192, 0,   0,   255], [255, 0,   255, 255], [153, 85,  201, 255], [0,   0,   0,   255]]
+        ),
+        'VEL': this.ColorMap(
+            [-35                -30,                  -25,                  -20,                  -15, 
+             -10,                -5,                    0,                    5,                   10, 
+             15,                 20,                   25,                   30,                   35],
+            [[2,   252, 2,   255], [1,   228, 1,   255], [1,   197, 1,   255], [7,   172, 4,   255], [6,   143, 3,   255],
+             [4,   114, 2,   255], [124, 151, 123, 255], [152, 119, 119, 255], [137, 0,   0,   255], [162, 0,   0,   255],
+             [185, 0,   0,   255], [216, 0,   0,   255], [239, 0,   0,   255], [254, 0,   0,   255]]
+        ),
+    };
+
 
    /********************
     * ObsLayer code
