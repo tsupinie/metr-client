@@ -187,7 +187,25 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             }
 
             _this.activate_layer(lyr);
-        }
+        };
+
+        this.remove_layer = function(lyr) {
+            var lyr_idx = _this.draw_order.indexOf(lyr);
+            if (lyr_idx === -1) {
+                throw "Item doesn't exist to remove"
+            }
+
+            _this.draw_order.splice(lyr_idx, 1);
+
+            if (lyr.active) {
+                var new_idx = Math.max(lyr_idx - 1, 0);
+                _this.activate_layer(_this.draw_order[new_idx]);
+            }
+
+            if (_this.menu_visible.innerHTML == 'Layers') {
+                _this.show_menu['Layers']();
+            }
+        };
 
         this.set_status = function(stat_txt) {
             var elem = _this.status.select('p');
@@ -233,7 +251,35 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 _this.menu.html("");
                 var ul = _this.menu.append('ul');
                 for (var ilyr = _this.draw_order.length - 1; ilyr > -1; ilyr--) {
-                    _this.draw_order[ilyr].layer_menu(ul);
+                    var lyr_html = _this.draw_order[ilyr].layer_menu_html();
+                    var lyr_mkr = ul.append('li').on('click', function() {
+                        var n_layers = _this.draw_order.length;
+                        var lyr_index;
+                        for (var lyr of this.parentNode.childNodes.entries()) {
+                            if (lyr[1] == this) {
+                                lyr_index = lyr[0];
+                            }
+                        }
+                        _this.activate_layer(_this.draw_order[n_layers - lyr_index - 1]);
+                    });
+                    lyr_mkr.append('div').attr('class', 'drag').text("\u22ee");
+                    lyr_mkr.append('p').html(lyr_html);
+                    lyr_mkr.append('div')
+                           .attr('class', 'remove')
+                           .text('\u00d7')
+                           .on('click', function() {
+                               var n_layers = _this.draw_order.length;
+                               var lyr_index;
+                               for (var lyr of this.parentNode.parentNode.childNodes.entries()) {
+                                   if (lyr[1] == this.parentNode) {
+                                       lyr_index = lyr[0];
+                                   }
+                               }
+                               _this.remove_layer(_this.draw_order[n_layers - lyr_index - 1]);
+                               _this.draw();
+                               d3.event.stopPropagation();
+                           });
+
                     if (_this.draw_order[ilyr].active) {
                         var n_layers = _this.draw_order.length;
                         var lyr_marker = d3.select(ul.node().childNodes[n_layers - ilyr - 1]);
@@ -241,7 +287,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                     }
                 }
 
-                var width = parseInt(_this._menu_bar_width, 10) - 10;
+                var width = parseInt(_this._menu_bar_width, 10) - 4;
                 ul.selectAll('li').style('width', width + 'px');
                 ul.selectAll('li').call(d3.drag().on('start', _this._drag_layers));
 
@@ -274,6 +320,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         };
 
         this._drag_layers = function() {
+            if (d3.event.sourceEvent.path[0].classList.value !== "drag") {
+                return;
+            }
+
             var lyr_marker = d3.select(this);
             var lyr_parent = d3.select(this.parentNode);
 
@@ -293,16 +343,20 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             this.parentNode.insertBefore(lyr_spacer, this.parentNode.childNodes[lyr_index + 1]);
 
             var mkr_pos = this.getBoundingClientRect();
-            var pad_left = 2;
-            var pad_top = 2;
+            if (lyr_marker.attr('class') == 'active') {
+                var pad_left = 0;
+                var pad_top = -2;
+            }
+            else {
+                var pad_left = 2;
+                var pad_top = 2;
+            }
             var dx = d3.event.x - mkr_pos.left + pad_left;
-            var dy = d3.event.y - mkr_pos.top + pad_left;
-            var moved = false;
+            var dy = d3.event.y - mkr_pos.top + pad_top;
 
             lyr_marker.style('position', 'absolute').style('left', mkr_pos.left - pad_left).style('top', mkr_pos.top - pad_top);
 
             function dragged(d) {
-                moved = true;
                 lyr_marker.style('left', d3.event.x - dx).style('top', d3.event.y - dy);
                 var mkr_pos = this.getBoundingClientRect();
                 if (lyr_index > 0 && mkr_pos.top < lyr_coords[lyr_index - 1]) {
@@ -336,10 +390,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             function dragend() {
                 this.parentNode.removeChild(lyr_spacer);
                 lyr_marker.style('position', 'static');
-                if (!moved) {
-                    var n_layers = _this.draw_order.length;
-                    _this.activate_layer(_this.draw_order[n_layers - lyr_index - 1]);
-                }
             }
 
             d3.event.on('drag', dragged).on('end', dragend);
@@ -449,8 +499,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
 
     };
 
-    this.DataLayer.prototype.layer_menu = function(root) {
-        root.append('li');
+    this.DataLayer.prototype.layer_menu_html = function() {
+        return "";
     };
 
     this.DataLayer.prototype.set_viewport = function(width, height) {
@@ -560,10 +610,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
     };
 
-    this.ShapeLayer.prototype.layer_menu = function(root) {
+    this.ShapeLayer.prototype.layer_menu_html = function() {
         var names = {'us_cty':'Geography:<br>US Counties', 'us_st':'Geography:<br>US States'};
         var readable_name = names[this.name];
-        root.append('li').html(readable_name);
+        return readable_name;
     };
 
     this.ShapeLayer.prototype.set_linewidth = function(linewidth) {
@@ -755,9 +805,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, this._pts.length / 2);
     };
 
-    this.Level2Layer.prototype.layer_menu = function(root) {
-        var readable_name = sprintf("Level 2 Radar:<br>%s %.1f\u00b0 %s", this.site, this.elev, this.field);
-        root.append('li').html(readable_name);
+    this.Level2Layer.prototype.layer_menu_html = function() {
+        var readable_name = sprintf("%s %.1f\u00b0 %s", this.site, this.elev, this.field);
+        return readable_name;
     };
 
     this.Level2Layer.prototype._reflectivity_color_map = function(ref) {
@@ -1034,8 +1084,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
     };
 
-    this.ObsLayer.prototype.layer_menu = function(root) {
-        root.append('li').html("Surface Obs:<br>" + this.source.toUpperCase());
+    this.ObsLayer.prototype.layer_menu_html = function() {
+        return this.source.toUpperCase();
     };
 
     this.ObsLayer.prototype._gen_wind_barb = function(pos, wind_spd, wind_dir) {

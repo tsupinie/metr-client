@@ -81,9 +81,6 @@ div#menu ul {
 }
 
 div#menu li {
-    padding-left: 6px;
-    padding-top: 14px;
-/*  padding-bottom: 10px; */
     margin: 2px;
     background-color: #222222;
     color: #ffffff;
@@ -97,7 +94,48 @@ div#menu li {
     -khtml-user-select: none;
     -webkit-user-select: none;
     -o-user-select: none;
+}
+
+div#menu li p {
+    float: left;
+    width:84%;
+    height:100%;
+    margin: 0px;
+    padding: 0px;
+    padding-left:3px;
+    line-height: 50px;
+    vertical-align: middle;
+}
+
+div#menu li div.drag {
+    height: 100%;
+    width: 8px;
+    margin: 0px;
+    padding: 0px;
+    float: left;
+    line-height: 50px;
+    vertical-align: middle;
+    font-size:1.5em;
+
     cursor: -webkit-grab;
+}
+
+div#menu li div.drag:hover {
+    background-color: #555555;
+}
+
+div#menu li div.remove {
+    width: 15px;
+    height:15px;
+    padding: 0px;
+    margin: 0px;
+    float: right;
+    text-align: center;
+    cursor: pointer;
+}
+
+div#menu li div.remove:hover {
+    background-color: #555555;
 }
 
 div#menu li.addnew {
