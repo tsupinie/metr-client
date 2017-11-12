@@ -17,6 +17,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                     'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_st'); },
                     'available':false,
                 },
+                'US Interstate Highways': {
+                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_interstate'); },
+                    'available':true,
+                },
+
             },
             'Level 2 Radar': {
                 'action': function() { console.log("Adding Level2 layer"); },
@@ -525,9 +530,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
 
         var _frag_shader_src = `
             precision mediump float;
+            uniform vec3 u_color;
 
             void main() {
-                gl_FragColor = vec4(0, 0, 0, 1);
+                gl_FragColor = vec4(u_color, 1.0);
             }
         `;
 
@@ -542,12 +548,19 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._posbuf = gl.createBuffer();
         this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
         this._delta = gl.getUniformLocation(this._shader_prog, 'u_delta');
+        this._linecolor = gl.getUniformLocation(this._shader_prog, 'u_color');
 
         if (name == 'us_st') {
             this.set_linewidth(2);
+            this._color = [0, 0, 0];
         }
-        else{
+        else if ( name == 'us_interstate') {
+            this.set_linewidth(2);
+            this._color = [0, 0, 0.4];
+        }
+        else {
             this.set_linewidth(1);
+            this._color = [0, 0, 0];
         }
 
         this._proj_data = [];
@@ -585,7 +598,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
     };
 
     this.ShapeLayer.prototype.get_status = function() {
-        var names = {'us_cty': 'US County Boundaries', 'us_st': 'US State Boundaries'};
+        var names = {'us_cty': 'US County Boundaries', 'us_st': 'US State Boundaries', 'us_interstate':'US Interstate Highways'};
         return names[this.name];
     }
 
@@ -600,6 +613,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
         gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
         gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
+        gl.uniform3f(this._linecolor, this._color[0], this._color[1], this._color[2]);
 
         for (ivec in this._delta_vectors) {
             vec = this._delta_vectors[ivec];
@@ -611,7 +625,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
     };
 
     this.ShapeLayer.prototype.layer_menu_html = function() {
-        var names = {'us_cty':'Geography:<br>US Counties', 'us_st':'Geography:<br>US States'};
+        var names = {'us_cty':'US Counties', 'us_st':'US States', 'us_interstate':'US Interstate Highways'};
         var readable_name = names[this.name];
         return readable_name;
     };
