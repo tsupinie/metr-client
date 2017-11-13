@@ -135,7 +135,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 trans = trans.translate(zoom_x, zoom_y).scale(zoom_k);
             }
 
-            var zoom = d3.zoom().scaleExtent([0.5, 240]).on("zoom", _this.zoom)
+            var zoom = d3.zoom().scaleExtent([0.5, 480]).on("zoom", _this.zoom)
             _this.map.call(zoom).call(zoom.transform, trans);
 
         };
@@ -212,11 +212,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             }
         };
 
-        this.set_status = function(stat_txt) {
-            var elem = _this.status.select('p');
-            elem.text(stat_txt);
-            var hgt = (_this._stat_hgt - elem.node().getBoundingClientRect().height) / 2;
-            elem.style('margin-top', hgt).style('margin-bottom', hgt);
+        this.set_status = function(layer) {
+            layer.set_status(_this.status);
         };
 
         this.toggle_menu = function(menu_item) {
@@ -412,7 +409,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 _this.show_menu['Layers']();
             }
 
-            _this.set_status(layer.get_status());
+            layer.set_status(_this.status);
         };
 
         this._add_menu = function(root) {
@@ -469,8 +466,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
 
             for (var opt in root.node().options) {
                 menu_root.append('li')
-                         .style('height', '24px')
-                         .style('padding-top', '6px')
+                         .style('height', '26px')
+                         .style('line-height', '26px')
+                         .style('vertical-align', 'middle')
+                         .style('padding-left', '3px')
                          .style('cursor', 'pointer')
                          .html(opt)
                          .attr('depth', parseInt(root.attr('depth')) + 1)
@@ -597,9 +596,17 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._callbacks['redraw']();
     };
 
-    this.ShapeLayer.prototype.get_status = function() {
+    this.ShapeLayer.prototype.set_status = function(status_bar) {
         var names = {'us_cty': 'US County Boundaries', 'us_st': 'US State Boundaries', 'us_interstate':'US Interstate Highways'};
-        return names[this.name];
+        var stat = names[this.name];
+
+        var stat_rect = status_bar.node().getBoundingClientRect()
+        status_bar.html('')
+                  .append('p')
+                  .style('height', stat_rect.height)
+                  .style('line-height', stat_rect.height + 'px')
+                  .style('vertical-align', 'middle')
+                  .html(stat)
     }
 
     this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
@@ -688,6 +695,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this.field = field;
         this.elev = elev;
 
+        var _default_units = {'REF': 'dBZ', 'VEL': 'm/s'};
+        this.units = _default_units[this.field];
+
         this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
 
         this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
@@ -770,12 +780,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                       gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
 
         if (this.active) {
-            this._callbacks['status'](this.get_status());
+            this._callbacks['status'](this);
         }
         this._callbacks['redraw']();
     };
 
-    this.Level2Layer.prototype.get_status = function() {
+    this.Level2Layer.prototype.set_status = function(status_bar) {
         if (this._l2_file !== undefined) {
             var time_parse = d3.timeParse("%Y%m%d_%H%M");
             var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
@@ -785,7 +795,46 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         else {
             var stat = sprintf("Downloading %s data ...", this.site);
         }
-        return stat;
+
+        var color_map = this.color_maps[this.field];
+
+        var stat_rect = status_bar.node().getBoundingClientRect()
+        status_bar.html('')
+                  .append('p')
+                  .style('height', stat_rect.height)
+                  .style('line-height', stat_rect.height + 'px')
+                  .style('vertical-align', 'middle')
+                  .style('float', 'left')
+                  .html(stat);
+
+        var cb_elem_width = 35
+
+        var color_bar = status_bar.append('div')
+                                  .style('float', 'right')
+
+        color_bar.append('ul')
+                 .style('height', stat_rect.height / 2 - 1)
+                 .style('padding-left', cb_elem_width / 2)
+                 .selectAll('li')
+                 .data(color_map.colors)
+                 .enter()
+                 .append('li')
+                 .style('background-color', function(d) { return 'rgba(' + d.join() + ')'; })
+                 .style('display', 'inline-block')
+                 .style('width',  cb_elem_width + 'px')
+                 .style('height', (stat_rect.height / 2 - 1) + 'px')
+                 .html('&nbsp;');
+
+        color_bar.append('ul')
+                 .style('font-size', (stat_rect.height / 2 - 1) + 'px')
+                 .selectAll('li')
+                 .data(color_map.levels.concat([this.units]))
+                 .enter()
+                 .append('li')
+                 .style('display', 'inline-block')
+                 .style('width', cb_elem_width + 'px')
+                 .style('text-align', 'center')
+                 .text(function(d) { return d; });
     }
 
     this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
@@ -825,8 +874,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
     };
 
     this.ColorMap = function(levels, colors) {
-        return function(level) {
-            this.levels = levels
+        cmap = function(level) {
+            this.levels = levels;
             this.colors = colors;
             var color = [0, 0, 0, 0];
             for (var ilv = 0; ilv < this.levels.length - 1; ilv++) {
@@ -837,6 +886,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             }
             return color;
         };
+
+        cmap.levels = levels;
+        cmap.colors = colors
+
+        return cmap
     };
 
     this.Level2Layer.prototype.color_maps = {
@@ -849,7 +903,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
              [192, 0,   0,   255], [255, 0,   255, 255], [153, 85,  201, 255], [0,   0,   0,   255]]
         ),
         'VEL': this.ColorMap(
-            [-35                -30,                  -25,                  -20,                  -15, 
+            [-35,               -30,                  -25,                  -20,                  -15, 
              -10,                -5,                    0,                    5,                   10, 
              15,                 20,                   25,                   30,                   35],
             [[2,   252, 2,   255], [1,   228, 1,   255], [1,   197, 1,   255], [7,   172, 4,   255], [6,   143, 3,   255],
@@ -1036,12 +1090,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
 
         if (this.active) {
-            this._callbacks['status'](this.get_status());
+            this._callbacks['status'](this);
         }
         this._callbacks['redraw']();
     };
 
-    this.ObsLayer.prototype.get_status = function() {
+    this.ObsLayer.prototype.set_status = function(status_bar) {
         var names = {'metar':'METAR', 'mesonet':'Mesonet'};
         if (this._obs_file !== undefined) {
             var time_parse = d3.timeParse("%Y%m%d_%H%M");
@@ -1052,7 +1106,14 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         else {
             var stat = sprintf("Downloading %s data ...", names[this.source]);
         }
-        return stat;
+
+        var stat_rect = status_bar.node().getBoundingClientRect()
+        status_bar.html('')
+                  .append('p')
+                  .style('height', stat_rect.height)
+                  .style('line-height', stat_rect.height + 'px')
+                  .style('vertical-align', 'middle')
+                  .html(stat)
     };
 
     this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {

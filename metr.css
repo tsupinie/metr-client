@@ -4,6 +4,13 @@ body {
     margin:0px;
 }
 
+ul {
+    list-style-type: none;
+    padding: 0px;
+    margin: 0px;
+    cursor: default;
+}
+
 canvas#main {
     width: 100%;
     height: 100%;
@@ -42,13 +49,6 @@ div#menutabs {
     -o-user-select: none;
 }
 
-div#menutabs ul {
-    list-style-type: none;
-    padding: 0px;
-    margin: 0px;
-    cursor: default;
-}
-
 div#menutabs li {
     width: 70px;
     display: inline-block;
@@ -73,11 +73,7 @@ div#menu {
 }
 
 div#menu ul {
-    list-style-type: none;
-    padding: 0px;
-    margin: 0px;
     margin-top: 2px;
-    cursor: default;
 }
 
 div#menu li {
