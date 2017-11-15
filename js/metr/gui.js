@@ -542,12 +542,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
 
         this._callbacks = {};
 
-        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
-        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
-        this._posbuf = gl.createBuffer();
-        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
-        this._delta = gl.getUniformLocation(this._shader_prog, 'u_delta');
-        this._linecolor = gl.getUniformLocation(this._shader_prog, 'u_color');
+        this._shader = new WGLShader(gl, 'shape', _vert_shader_src, _frag_shader_src);
+        this._shader.register_attribute('a_pos');
+        this._shader.register_uniform('mat3', 'u_zoom');
+        this._shader.register_uniform('vec2', 'u_delta');
+        this._shader.register_uniform('vec3', 'u_color');
 
         if (name == 'us_st') {
             this.set_linewidth(2);
@@ -615,18 +614,16 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
 
         var gl = this._gl;
-        gl.useProgram(this._shader_prog);
-        gl.enableVertexAttribArray(this._pos);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
-        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
-        gl.uniform3f(this._linecolor, this._color[0], this._color[1], this._color[2]);
+
+        this._shader.enable_program();
+        this._shader.bind_attribute('a_pos', this._proj_data);
+        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_color', this._color);
 
         for (ivec in this._delta_vectors) {
             vec = this._delta_vectors[ivec];
+            this._shader.bind_uniform('u_delta', [vec[0] / zoom_fac, vec[1] / zoom_fac]);
 
-            gl.uniform2f(this._delta, vec[0] / zoom_fac, vec[1] / zoom_fac); 
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._proj_data), gl.DYNAMIC_DRAW);
             gl.drawArrays(gl.LINE_STRIP, 0, this._proj_data.length / 2);
         }
     };
@@ -698,16 +695,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         var _default_units = {'REF': 'dBZ', 'VEL': 'm/s'};
         this.units = _default_units[this.field];
 
-        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
-
-        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
-        this._posbuf = gl.createBuffer();
-        this._texc = gl.getAttribLocation(this._shader_prog, 'a_tex');
-        this._texcbuf = gl.createBuffer();
-        this._tex = gl.getUniformLocation(this._shader_prog, 'u_tex');
-        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
-        this._rdr = gl.getUniformLocation(this._shader_prog, 'u_rdr_pos');
-
+        this._shader = new WGLShader(gl, 'level2', _vert_shader_src, _frag_shader_src);
+        this._shader.register_attribute('a_pos');
+        this._shader.register_attribute('a_tex');
+        this._shader.register_uniform('mat3', 'u_zoom');
+        this._shader.register_uniform('vec2', 'u_rdr_pos');
+        
         var int_deg = Math.floor(elev);
         var frc_deg = Math.round((elev - int_deg) * 10);
         var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
@@ -769,15 +762,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             }
         }
 
-        var gl = this._gl;
-        this._rdr_tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, this._rdr_tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_size_x, tex_size_y, 0, gl.RGBA, 
-                      gl.UNSIGNED_BYTE, new Uint8Array(refl_img));
+        this._shader.register_texture('radar', 'u_tex', {'sizex':tex_size_x, 'sizey':tex_size_y, 'image':refl_img});
 
         if (this.active) {
             this._callbacks['status'](this);
@@ -843,28 +828,14 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
 
         gl = this._gl;
-        gl.useProgram(this._shader_prog);
 
-        gl.enableVertexAttribArray(this._pos);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
+        this._shader.enable_program();
+        this._shader.bind_attribute('a_pos', this._pts);
+        this._shader.bind_attribute('a_tex', this._tex_coords);
+        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_rdr_pos', this._rdr_loc);
+        this._shader.bind_texture('radar', 0);
 
-        gl.enableVertexAttribArray(this._texc);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
-        gl.vertexAttribPointer(this._texc, 2, gl.FLOAT, false, 0, 0);
-
-        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
-        gl.uniform2f(this._rdr, this._rdr_loc[0], this._rdr_loc[1]);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._tex_coords), gl.DYNAMIC_DRAW);
-
-        gl.uniform1i(this._tex, 0);
-        gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this._rdr_tex);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._pts), gl.DYNAMIC_DRAW);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, this._pts.length / 2);
     };
 
@@ -956,33 +927,15 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._n_bytes = 52;
         this._obs_file = undefined;
 
-        this._shader_prog = _mod.compile_shaders(gl, _vert_shader_src, _frag_shader_src);
-        this._pos = gl.getAttribLocation(this._shader_prog, 'a_pos');
-        this._posbuf = gl.createBuffer();
-        this._anch = gl.getAttribLocation(this._shader_prog, 'a_anch');
-        this._anchbuf = gl.createBuffer();
-        this._texc = gl.getAttribLocation(this._shader_prog, 'a_tex');
-        this._texcbuf = gl.createBuffer();
-        this._tex = gl.getUniformLocation(this._shader_prog, 'u_tex');
-        this._fontcolor = gl.getUniformLocation(this._shader_prog, 'u_fontcolor');
-        this._zoom = gl.getUniformLocation(this._shader_prog, 'u_zoom');
-        this._viewport = gl.getUniformLocation(this._shader_prog, 'u_viewport');
-
-        this._font_tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, this._font_tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, _mod.font_atlas.get_texture());
-
-        this._barb_tex = gl.createTexture();
-        gl.bindTexture(gl.TEXTURE_2D, this._barb_tex);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([255, 255, 255, 255]));
+        this._shader = new WGLShader(gl, 'obs', _vert_shader_src, _frag_shader_src);
+        this._shader.register_attribute('a_pos');
+        this._shader.register_attribute('a_anch');
+        this._shader.register_attribute('a_tex');
+        this._shader.register_uniform('vec3', 'u_fontcolor');
+        this._shader.register_uniform('mat3', 'u_zoom');
+        this._shader.register_uniform('vec2', 'u_viewport');
+        this._shader.register_texture('font', 'u_tex', _mod.font_atlas.get_texture());
+        this._shader.register_texture('wind_barb', 'u_tex', {'sizex':1, 'sizey':1, 'image':[255, 255, 255, 255]});
 
         this._text_from_ob = {
             'id': function(ob) {
@@ -1122,53 +1075,28 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
 
         var gl = this._gl;
-        gl.useProgram(this._shader_prog);
 
-        gl.enableVertexAttribArray(this._pos);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-        gl.vertexAttribPointer(this._pos, 2, gl.FLOAT, false, 0, 0);
+        this._shader.enable_program();
+        this._shader.bind_attribute('a_pos', this._barb_info['vert']);
+        this._shader.bind_attribute('a_anch', this._barb_info['anch']);
+        this._shader.bind_attribute('a_tex', this._barb_info['tex']);
+        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_viewport', [this._vp_width, this._vp_height]);
+        this._shader.bind_uniform('u_fontcolor', [0, 0, 0]);
+        this._shader.bind_texture('wind_barb', 2);
 
-        gl.enableVertexAttribArray(this._anch);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
-        gl.vertexAttribPointer(this._anch, 2, gl.FLOAT, false, 0, 0);
-
-        gl.enableVertexAttribArray(this._texc);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
-        gl.vertexAttribPointer(this._texc, 2, gl.FLOAT, false, 0, 0);
-
-        gl.uniformMatrix3fv(this._zoom, false, zoom_matrix);
-        gl.uniform2f(this._viewport, this._vp_width, this._vp_height);
-
-        gl.uniform1i(this._tex, 2);
-        gl.activeTexture(gl.TEXTURE2);
-        gl.bindTexture(gl.TEXTURE_2D, this._barb_tex);
-        
-        gl.uniform3f(this._fontcolor, 0, 0, 0);
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['tex']), gl.DYNAMIC_DRAW);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['anch']), gl.DYNAMIC_DRAW);
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._barb_info['vert']), gl.DYNAMIC_DRAW);
         gl.drawArrays(gl.TRIANGLES, 0, this._barb_info['vert'].length / 2);
 
-        gl.uniform1i(this._tex, 1);
-        gl.activeTexture(gl.TEXTURE1);
-        gl.bindTexture(gl.TEXTURE_2D, this._font_tex);
+        this._shader.bind_texture('font', 1);
 
         for (var obvar in this._text_info) {
-            var color = this._text_fmt[obvar]['color']
-            gl.uniform3f(this._fontcolor, color[0], color[1], color[2]);
-            gl.bindBuffer(gl.ARRAY_BUFFER, this._texcbuf);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['tex']), gl.DYNAMIC_DRAW);
+            var color = this._text_fmt[obvar]['color'];
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, this._anchbuf);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['anch']), gl.DYNAMIC_DRAW);
+            this._shader.bind_uniform('u_fontcolor', color);
+            this._shader.bind_attribute('a_pos', this._text_info[obvar]['vert']);
+            this._shader.bind_attribute('a_anch', this._text_info[obvar]['anch']);
+            this._shader.bind_attribute('a_tex', this._text_info[obvar]['tex']);
 
-            gl.bindBuffer(gl.ARRAY_BUFFER, this._posbuf);
-            gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this._text_info[obvar]['vert']), gl.DYNAMIC_DRAW);
             gl.drawArrays(gl.TRIANGLES, 0, this._text_info[obvar]['vert'].length / 2);
         }
     };
@@ -1416,5 +1344,113 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         gl.deleteProgram(shader_prog);
 
     };
+ 
+   /********************
+    * Shader manager code
+    ********************/
+    this.WGLShader = function(gl, name, vert_shader_src, frag_shader_src) {
+        this.gl = gl;
+        this.name = name;
+        this._prog = _mod.compile_shaders(gl, vert_shader_src, frag_shader_src);
+
+        this._tex = {};
+        this._tex_unis = {};
+        this._attrs = {};
+        this._attr_bufs = {};
+        this._uniforms = {};
+        this._uni_types = {};
+    };
+
+    this.WGLShader.prototype.enable_program = function() {
+        this.gl.useProgram(this._prog);
+    };
+
+    this.WGLShader.prototype.register_texture = function(tex_name, uni_name, tex_data) {
+        var gl = this.gl;
+        this.register_uniform('sampler2D', uni_name);
+
+        this._tex_unis[tex_name] = uni_name;
+        this._tex[tex_name] = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, this._tex[tex_name]);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+        if (tex_data['sizex'] !== undefined) {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_data['sizex'], tex_data['sizey'], 0, gl.RGBA, 
+                          gl.UNSIGNED_BYTE, new Uint8Array(tex_data['image']));
+        }
+        else {
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tex_data);
+        }
+    };
+
+    // Eventually would like to be able to parse this from the code itself
+    this.WGLShader.prototype.register_attribute = function(attr_name) {
+        this._attrs[attr_name] = this.gl.getAttribLocation(this._prog, attr_name);
+        this._attr_bufs[attr_name] = this.gl.createBuffer();
+    };
+
+    this.WGLShader.prototype.register_uniform = function(uni_type, uni_name) {
+        this._uniforms[uni_name] = this.gl.getUniformLocation(this._prog, uni_name);
+        this._uni_types[uni_name] = uni_type;
+    };
+
+    this.WGLShader.prototype.bind_texture = function(tex_name, tex_num) {
+        var gl = this.gl;
+
+        this.bind_uniform(this._tex_unis[tex_name], tex_num);
+        gl.activeTexture(eval('gl.TEXTURE' + tex_num));
+        gl.bindTexture(gl.TEXTURE_2D, this._tex[tex_name]);
+    };
+
+    this.WGLShader.prototype.bind_attribute = function(attr_name, attr_data) {
+        var gl = this.gl;
+
+        gl.enableVertexAttribArray(this._attrs[attr_name]);
+        gl.bindBuffer(gl.ARRAY_BUFFER, this._attr_bufs[attr_name]);
+        gl.vertexAttribPointer(this._attrs[attr_name], 2, gl.FLOAT, false, 0, 0);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(attr_data), gl.DYNAMIC_DRAW);
+    };
+
+    this.WGLShader.prototype.bind_uniform = function(uni_name, uni_data, is_matrix) {
+        if (is_matrix === undefined) { is_matrix = false; }
+
+        var call_type, call_num;
+
+        var uni_type = this._uni_types[uni_name];
+        if (uni_type == 'int' || uni_type.slice(0, 4) == 'ivec' || uni_type == 'sampler2D') {
+            call_type = 'i';
+        }
+        else {
+            call_type = 'f';
+        }
+
+        if (Array.isArray(uni_data)) {
+            if (is_matrix) {
+                call_num = Math.floor(Math.sqrt(uni_data.length));
+            }
+            else {
+                call_num = uni_data.length;
+            }
+        }
+        else {
+            uni_data = [ uni_data ];
+            call_num = 1;
+        }
+
+        var gl_func;
+
+        if (is_matrix) {
+            gl_func = eval('this.gl.uniformMatrix' + call_num + call_type + 'v');
+            gl_func.bind(this.gl)(this._uniforms[uni_name], false, uni_data);
+        }
+        else {
+            gl_func = eval('this.gl.uniform' + call_num + call_type + 'v');
+            gl_func.bind(this.gl)(this._uniforms[uni_name], uni_data);
+        }
+    };
+
     return new gui()
 })
