@@ -1,5 +1,5 @@
 
-define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo, io, utils, sprintf) {
+define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], function(d3, d3geo, io, utils, geo, sprintf) {
     var _mod = this;
     var sprintf = sprintf.sprintf;
 
@@ -72,12 +72,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             var std_lon = -97.5;
             var std_lat = 37.5;
 
-            _this.map_proj = d3geo.geoConicConformal()
-                                  .parallels(parallels)
-                                  .rotate([-std_lon, 0])
-                                  .center([0, std_lat])
-                                  .scale(1000)
-                                  .translate([0, 0]);
+            _this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
 
             var gl = _this.map.node().getContext('webgl');
 
@@ -173,12 +168,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this.add_layer = function(pos, LayerType) {
             var args = Array.prototype.slice.call(arguments, 2);
             var gl = _this.map.node().getContext('webgl');
-            args.splice(0, 0, gl);
+            args.splice(0, 0, gl, _this.map_geo);
 
             var lyr = Object.create(LayerType.prototype);
             LayerType.apply(lyr, args);
 
-            lyr.set_map_projection(_this.map_proj);
             lyr.set_viewport(_this.width, _this.height);
             lyr.register_callback('redraw', _this.draw);
             lyr.register_callback('status', _this.set_status);
@@ -491,10 +485,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._callbacks = {};
     };
 
-    this.DataLayer.prototype.set_map_projection = function(map_proj){
-        this.map_proj = map_proj;
-    };
- 
     this.DataLayer.prototype.register_callback = function(action, cb) {
         this._callbacks[action] = cb;
     };
@@ -515,14 +505,15 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
    /********************
     * ShapeLayer code
     ********************/
-    this.ShapeLayer = function(gl, cls, name) {
+    this.ShapeLayer = function(gl, map_proj, cls, name) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
             uniform vec2 u_delta;
             uniform mat3 u_zoom;
 
             void main() {
-                vec2 zoom_pos = (vec3(a_pos + u_delta, 1.0) * u_zoom).xy;
+                vec2 proj_pos = lcc(a_pos);
+                vec2 zoom_pos = (vec3(proj_pos + u_delta, 1.0) * u_zoom).xy;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
             }
         `;
@@ -543,6 +534,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._callbacks = {};
 
         this._shader = new WGLShader(gl, 'shape', _vert_shader_src, _frag_shader_src);
+        this._shader.register_plugin(map_proj);
+        this._shader.compile_program();
+
         this._shader.register_attribute('a_pos');
         this._shader.register_uniform('mat3', 'u_zoom');
         this._shader.register_uniform('vec2', 'u_delta');
@@ -584,10 +578,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
                 this._proj_data[ipp + 1] = NaN;
             }
             else {
-                var raw_pt = [shp_file.data[ipt], shp_file.data[ipt + 1]];
-                var proj_pt = this.map_proj(raw_pt);
-                this._proj_data[ipp] = proj_pt[0];
-                this._proj_data[ipp + 1] = proj_pt[1];
+                this._proj_data[ipp] = shp_file.data[ipt];
+                this._proj_data[ipp + 1] = shp_file.data[ipt + 1];
                 ipt++;
             }
             ipp += 2;
@@ -654,7 +646,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
    /********************
     * Level2Layer code
     ********************/
-    this.Level2Layer = function(gl, site, field, elev) {
+    this.Level2Layer = function(gl, map_proj, site, field, elev) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_tex;
@@ -664,7 +656,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             varying vec2 v_tex;
 
             void main() {
-                vec2 pos_px = u_rdr_pos + vec2(a_pos.x * cos(a_pos.y), a_pos.x * sin(a_pos.y));
+                vec2 pos_lonlat = lonlat_at(u_rdr_pos, a_pos.x, a_pos.y);
+                vec2 pos_px = lcc(pos_lonlat);
                 vec2 zoom_pos = (vec3(pos_px, 1.0) * u_zoom).xy;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
                 v_tex = a_tex;
@@ -696,6 +689,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this.units = _default_units[this.field];
 
         this._shader = new WGLShader(gl, 'level2', _vert_shader_src, _frag_shader_src);
+        this._shader.register_plugin(map_proj);
+        this._shader.register_plugin(new geo.geodesic());
+        this._shader.compile_program();
+
         this._shader.register_attribute('a_pos');
         this._shader.register_attribute('a_tex');
         this._shader.register_uniform('mat3', 'u_zoom');
@@ -718,15 +715,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
 
         this._l2_file = l2_file
-        this._rdr_loc = this.map_proj([l2_file.site_longitude, l2_file.site_latitude]);
-        var start_loc = this.map_proj([l2_file.first_longitude, l2_file.first_latitude]);
+        this._rdr_loc = [l2_file.site_longitude, l2_file.site_latitude];
 
         var rdr_px = this._rdr_loc;
-        var start_px = start_loc;
 
-        var st_rn = Math.sqrt((start_px[0] - rdr_px[0]) ** 2 + (start_px[1] - rdr_px[1]) ** 2);
-        var st_az = Math.atan2(start_px[1] - rdr_px[1], start_px[0] - rdr_px[0]) * 180 / Math.PI;
-        var drng = l2_file.drng * st_rn / l2_file.st_range;
+        var st_rn = l2_file.st_range / 1000;
+        var st_az = l2_file.st_azimuth;
+        var drng = l2_file.drng / 1000;
         var dazim = l2_file.dazim;
         var tex_size_x = l2_file.n_gates;
         var tex_size_y = l2_file.n_rays;
@@ -736,9 +731,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._tex_coords = [];
         for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz++) {
             this._pts[ipt + 0] = (st_rn + (l2_file.n_gates + 0.5) * drng);
-            this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
+            this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
             this._pts[ipt + 2] = (st_rn - 0.5 * drng);
-            this._pts[ipt + 3] = (st_az + (iaz - 0.5) * dazim) * Math.PI / 180.;
+            this._pts[ipt + 3] = (st_az + (iaz - 0.5) * dazim);
 
             this._tex_coords[ipt + 0] = l2_file.n_gates / tex_size_x;
             this._tex_coords[ipt + 1] = iaz / tex_size_y;
@@ -887,7 +882,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
    /********************
     * ObsLayer code
     ********************/
-    this.ObsLayer = function(gl, source) {
+    this.ObsLayer = function(gl, map_proj, source) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_anch;
@@ -898,7 +893,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             varying vec2 v_tex;
 
             void main() {
-                vec2 zoom_anch_pos = (vec3(a_anch, 1.0) * u_zoom).xy;
+                vec2 proj_pos = lcc(a_anch);
+                vec2 zoom_anch_pos = (vec3(proj_pos, 1.0) * u_zoom).xy;
                 vec2 zoom_pos = zoom_anch_pos + a_pos / u_viewport;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
 
@@ -928,6 +924,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._obs_file = undefined;
 
         this._shader = new WGLShader(gl, 'obs', _vert_shader_src, _frag_shader_src);
+        this._shader.register_plugin(map_proj);
+        this._shader.compile_program();
+
         this._shader.register_attribute('a_pos');
         this._shader.register_attribute('a_anch');
         this._shader.register_attribute('a_tex');
@@ -1011,9 +1010,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
 
             ob.latitude    = sec1[0];
             ob.longitude   = sec1[1];
-            var pos = this.map_proj([ob.longitude, ob.latitude]);
-            ob.x = pos[0];
-            ob.y = pos[1];
             ob.pressure    = sec2[0];
             ob.temperature = sec2[1];
             ob.dewpoint    = sec2[2];
@@ -1021,13 +1017,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
             ob.wind_spd    = sec2[4];
 
             for (var obvar in this._text_from_ob) {
-                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.x, ob.y], 12, 
+                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.longitude, ob.latitude], 12, 
                                                      this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v']);
                 for (var txti in coords) {
                     this._text_info[obvar][txti].push(coords[txti]);
                 }
             }
-            var coords = this._gen_wind_barb([ob.x, ob.y], ob.wind_spd, ob.wind_dir);
+            var coords = this._gen_wind_barb([ob.longitude, ob.latitude], ob.wind_spd, ob.wind_dir);
             for (var brbi in coords) {
                 this._barb_info[brbi].push(coords[brbi]);
             }
@@ -1313,45 +1309,14 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         return this._atlas.texture;
     }
 
-    this.compile_shaders = function(gl, vert_shader_src, frag_shader_src) {
-        var compile_shader = function(type, src) {
-            var shader = gl.createShader(type);
-            gl.shaderSource(shader, src);
-            gl.compileShader(shader);
-            var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-            if (success) {
-                return shader;
-            }
-
-            console.log(gl.getShaderInfoLog(shader));
-            gl.deleteShader(shader);
-        }
-
-        var vert_shader = compile_shader(gl.VERTEX_SHADER, vert_shader_src);
-        var frag_shader = compile_shader(gl.FRAGMENT_SHADER, frag_shader_src);
-
-        shader_prog = gl.createProgram();
-        gl.attachShader(shader_prog, vert_shader);
-        gl.attachShader(shader_prog, frag_shader);
-        gl.linkProgram(shader_prog);
-
-        var link_success = gl.getProgramParameter(shader_prog, gl.LINK_STATUS);
-        if (link_success) {
-            return shader_prog
-        }
-
-        console.log(gl.getProgramInfoLog(shader_prog));
-        gl.deleteProgram(shader_prog);
-
-    };
- 
    /********************
     * Shader manager code
     ********************/
     this.WGLShader = function(gl, name, vert_shader_src, frag_shader_src) {
         this.gl = gl;
         this.name = name;
-        this._prog = _mod.compile_shaders(gl, vert_shader_src, frag_shader_src);
+        this._vs_src = vert_shader_src;
+        this._fs_src = frag_shader_src;
 
         this._tex = {};
         this._tex_unis = {};
@@ -1359,10 +1324,30 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         this._attr_bufs = {};
         this._uniforms = {};
         this._uni_types = {};
+
+        this._plugins = [];
     };
 
     this.WGLShader.prototype.enable_program = function() {
         this.gl.useProgram(this._prog);
+
+        for (var ipl in this._plugins) {
+            this._plugins[ipl].setup_render(this);
+        }
+    };
+
+    this.WGLShader.prototype.compile_program = function() {
+        this._prog = this._compile_shaders(this._vs_src, this._fs_src);
+
+        for (var ipl in this._plugins) {
+            this._plugins[ipl].setup_shader(this);
+        }
+    };
+
+    this.WGLShader.prototype.register_plugin = function(plugin) {
+        this._plugins.push(plugin);
+
+        this._vs_src = plugin.shader() + this._vs_src;
     };
 
     this.WGLShader.prototype.register_texture = function(tex_name, uni_name, tex_data) {
@@ -1452,5 +1437,38 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'sprintf'], function(d3, d3geo,
         }
     };
 
+    this.WGLShader.prototype._compile_shaders = function(vert_shader_src, frag_shader_src) {
+        var gl = this.gl;
+
+        var compile_shader = function(type, src) {
+            var shader = gl.createShader(type);
+            gl.shaderSource(shader, src);
+            gl.compileShader(shader);
+            var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
+            if (success) {
+                return shader;
+            }
+
+            console.log(gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+        }
+
+        var vert_shader = compile_shader(gl.VERTEX_SHADER, vert_shader_src);
+        var frag_shader = compile_shader(gl.FRAGMENT_SHADER, frag_shader_src);
+
+        shader_prog = gl.createProgram();
+        gl.attachShader(shader_prog, vert_shader);
+        gl.attachShader(shader_prog, frag_shader);
+        gl.linkProgram(shader_prog);
+
+        var link_success = gl.getProgramParameter(shader_prog, gl.LINK_STATUS);
+        if (link_success) {
+            return shader_prog
+        }
+
+        console.log(gl.getProgramInfoLog(shader_prog));
+        gl.deleteProgram(shader_prog);
+    };
+ 
     return new gui()
 })
