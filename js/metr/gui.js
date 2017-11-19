@@ -977,8 +977,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._font_shader.register_uniform('vec3', 'u_fontcolor');
         this._font_shader.register_uniform('mat3', 'u_zoom');
         this._font_shader.register_uniform('vec2', 'u_viewport');
-        this._font_shader.register_texture('font', 'u_tex', _mod.font_atlas.get_texture());
-
+        this._font_shader.register_texture('font', 'u_tex', _mod.font_atlas.get_texture(), true);
 
         this._barb_shader = new WGLShader(gl, 'barb', _barb_vert_shader_src, _frag_shader_src);
         this._barb_shader.register_plugin(map_proj);
@@ -1409,14 +1408,21 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._vs_src = plugin.shader() + this._vs_src;
     };
 
-    this.WGLShader.prototype.register_texture = function(tex_name, uni_name, tex_data) {
+    this.WGLShader.prototype.register_texture = function(tex_name, uni_name, tex_data, gen_mipmap) {
+        if (gen_mipmap === undefined) { gen_mipmap = false; }
+
         var gl = this.gl;
         this.register_uniform('sampler2D', uni_name);
 
         this._tex_unis[tex_name] = uni_name;
         this._tex[tex_name] = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, this._tex[tex_name]);
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        if (gen_mipmap) {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+        }
+        else {
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+        }
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
@@ -1427,6 +1433,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
         else {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tex_data);
+        }
+
+        if (gen_mipmap) {
+            gl.generateMipmap(gl.TEXTURE_2D);
         }
     };
 
