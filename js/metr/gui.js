@@ -535,6 +535,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this._shader = new WGLShader(gl, 'shape', _vert_shader_src, _frag_shader_src);
         this._shader.register_plugin(map_proj);
+        this._shader.register_plugin(new geo.geodesic());
         this._shader.compile_program();
 
         this._shader.register_attribute('a_pos');
@@ -697,7 +698,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.register_attribute('a_tex');
         this._shader.register_uniform('mat3', 'u_zoom');
         this._shader.register_uniform('vec2', 'u_rdr_pos');
-        
+        this._shader.register_index_array();
+
         var int_deg = Math.floor(elev);
         var frc_deg = Math.round((elev - int_deg) * 10);
         var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
@@ -725,22 +727,22 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var dazim = l2_file.dazim;
         var tex_size_x = l2_file.n_gates;
         var tex_size_y = l2_file.n_rays;
+        var skip_rng = l2_file.n_gates / 8;
+        var skip_az = 1;
 
         var ipt = 0;
         this._pts = [];
         this._tex_coords = [];
-        for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz++) {
-            this._pts[ipt + 0] = (st_rn + (l2_file.n_gates + 0.5) * drng);
-            this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
-            this._pts[ipt + 2] = (st_rn - 0.5 * drng);
-            this._pts[ipt + 3] = (st_az + (iaz - 0.5) * dazim);
+        for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz += skip_az) {
+            for (var irn = 0; irn < l2_file.n_gates + 1; irn += skip_rng) {
+                this._pts[ipt + 0] = (st_rn + (irn - 0.5) * drng);
+                this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
 
-            this._tex_coords[ipt + 0] = l2_file.n_gates / tex_size_x;
-            this._tex_coords[ipt + 1] = iaz / tex_size_y;
-            this._tex_coords[ipt + 2] = 0.0;
-            this._tex_coords[ipt + 3] = iaz / tex_size_y;
+                this._tex_coords[ipt + 0] = irn / tex_size_x;
+                this._tex_coords[ipt + 1] = iaz / tex_size_y;
 
-            ipt += 4;
+                ipt += 2;
+            }
         }
 
         var refl_img = [];
@@ -754,6 +756,26 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 refl_img[ipt + 2] = color[2];
                 refl_img[ipt + 3] = color[3];
                 ipt += 4;
+            }
+        }
+
+        this._idxs = [];
+        var ipt = 0;
+        for (var iaz = 0; iaz < l2_file.n_rays / skip_az; iaz++) { 
+            for (var irn = 0; irn < (l2_file.n_gates + 1) / skip_rng; irn++) {
+                var idx = (Math.floor((l2_file.n_gates + 1) / skip_rng) + 1) * iaz + irn;
+                if (irn == 0 && iaz > 0) { 
+                    this._idxs[ipt - 1] = idx;
+                }
+
+                this._idxs[ipt + 0] = idx;
+                this._idxs[ipt + 1] = idx + Math.floor((l2_file.n_gates + 1) / skip_rng) + 1;
+                ipt += 2;
+            }
+
+            if (iaz < l2_file.n_rays / skip_az) {
+                this._idxs[ipt] = this._idxs[ipt - 1];
+                ipt += 2;
             }
         }
 
@@ -830,8 +852,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.bind_uniform('u_zoom', zoom_matrix, true);
         this._shader.bind_uniform('u_rdr_pos', this._rdr_loc);
         this._shader.bind_texture('radar', 0);
+        this._shader.bind_index_array(this._idxs);
 
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, this._pts.length / 2);
+        gl.drawElements(gl.TRIANGLE_STRIP, this._idxs.length, gl.UNSIGNED_SHORT, 0);
     };
 
     this.Level2Layer.prototype.layer_menu_html = function() {
@@ -1382,6 +1405,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._uni_types[uni_name] = uni_type;
     };
 
+    this.WGLShader.prototype.register_index_array = function(){
+        this._idx_ary = this.gl.createBuffer();
+    }
+
     this.WGLShader.prototype.bind_texture = function(tex_name, tex_num) {
         var gl = this.gl;
 
@@ -1435,6 +1462,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             gl_func = eval('this.gl.uniform' + call_num + call_type + 'v');
             gl_func.bind(this.gl)(this._uniforms[uni_name], uni_data);
         }
+    };
+
+    this.WGLShader.prototype.bind_index_array = function(idx_ary) {
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._idx_ary);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx_ary), gl.DYNAMIC_DRAW);
     };
 
     this.WGLShader.prototype._compile_shaders = function(vert_shader_src, frag_shader_src) {
