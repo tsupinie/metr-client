@@ -7,6 +7,7 @@ define(function() {
 
     var lcc = function(lon_0, lat_0, lat_1, lat_2) {
         this.set_parameters(lon_0, lat_0, lat_1, lat_2);
+        this._geodesic = new geodesic();
     };
 
     lcc.prototype.set_parameters = function(lon_0, lat_0, lat_1, lat_2) {
@@ -37,6 +38,19 @@ define(function() {
         var y = -1000 * (this.rho_0 - rho * Math.cos(arg));
 
         return [x, y];
+    };
+
+    lcc.prototype.rotate_vec = function(vec, coord) {
+        var brg = Math.atan2(vec[1], vec[0]) * 180 / Math.PI - 90;
+        var dst = Math.sqrt(vec[0] * vec[0] + vec[1] * vec[1]);
+        other = this._geodesic.lonlat_at(coord, 0.001, brg);
+
+        var pos_proj = this.map(coord);
+        var other_proj = this.map(other);
+
+        var residual = [other_proj[0] - pos_proj[0], other_proj[1] - pos_proj[1]];
+        var residual_len = Math.sqrt(residual[0] * residual[0] + residual[1] * residual[1]);
+        return [ dst * residual[0] / residual_len, dst * residual[1] / residual_len ];
     };
 
     lcc.prototype.setup_render = function(shader_prog) {
@@ -74,6 +88,15 @@ define(function() {
 
                 return u_scale * (vec2(0., -u_lcc_rho0) + lcc_rho * vec2(sin(arg), cos(arg)));
             }
+
+            vec2 rotate_vec(vec2 vector, vec2 coord) {
+                float brg = degrees(atan(-vector.y, vector.x)) + 90.;
+                float dst = length(vector);
+                vec2 other = lonlat_at(coord, 1., brg);
+
+                return dst * vec2(1., -1.) * normalize(lcc(other) - lcc(coord));
+            }
+
         `;
         return shader;
     };
@@ -86,8 +109,16 @@ define(function() {
 
     };
 
-    geodesic.prototype.lonlat_at = function(lon, lat, brg, dst) {
+    geodesic.prototype.lonlat_at = function(start, dst, brg) {
+        var lon1 = start[0] * Math.PI / 180;
+        var lat1 = start[1] * Math.PI / 180;
+        var brgr = brg * Math.PI / 180;
+        var dstr = dst / this.r_earth;
 
+        var lat2 = Math.asin(Math.sin(lat1) * Math.cos(dstr) + Math.cos(lat1) * Math.sin(dstr) * Math.cos(brgr));
+        var lon2 = lon1 + Math.atan2(Math.sin(brgr) * Math.sin(dstr) * Math.cos(lat1), Math.cos(dstr) - Math.sin(lat1) * Math.sin(lat2));
+        lon2 = ((lon2 + 3. * Math.PI) % (2. * Math.PI)) - Math.PI;
+        return [lon2 * 180 / Math.PI, lat2 * 180 / Math.PI];
     };
 
     geodesic.prototype.setup_render = function() {};
@@ -121,6 +152,7 @@ define(function() {
                 lon2 = mod(lon2 + 3. * M_PI, 2. * M_PI) - M_PI;
                 return vec2(degrees(lon2), degrees(lat2));
             }
+
         `;
         return shader;
     };
