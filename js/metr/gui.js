@@ -42,9 +42,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.draw_order = [];
 
         this.init_map = function() {
+            _this.dpr = window.devicePixelRatio || 1;
             _this.map = d3.select('#main');
-            _this.map.node().width = window.innerWidth;
-            _this.map.node().height = window.innerHeight;
+            _this.map.node().width = window.innerWidth * _this.dpr;
+            _this.map.node().height = window.innerHeight * _this.dpr;
             _this.map.style('background-color', '#cccccc');
 
             _this.width = _this.map.node().width
@@ -55,10 +56,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             _this._menu_bar_width = '175px';
             _this._stat_hgt = 25
             _this.status = d3.select('#status');
-            _this.status.style('height', _this._stat_hgt).style('top', _this.height - _this._stat_hgt)
+            _this.status.style('height', _this._stat_hgt).style('top', _this.height / _this.dpr - _this._stat_hgt)
 
             _this.menu = d3.select('#menu');
-            _this.menu.style('height', _this.height - _this._stat_hgt)
+            _this.menu.style('height', _this.height / _this.dpr - _this._stat_hgt)
             _this.menu_tabs = d3.select('#menutabs');
             _this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
             _this.menu_visible = "";
@@ -78,7 +79,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             _this.add_layer(0, ShapeLayer, 'geo', 'us_cty');
             _this.add_layer(0, ShapeLayer, 'geo', 'us_st');
-            _this.add_layer(-1, Level2Layer, 'KFFC', 'REF', 0.5);
+            _this.add_layer(-1, Level2Layer, 'KLGX', 'REF', 0.5);
 
             d3.json('trebuchet.atlas', function(atlas) {
                 var texture_data = atlas.texture;
@@ -90,15 +91,15 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             });
 
             window.addEventListener('resize', function() {
-                _this.map.node().width = window.innerWidth;
-                _this.map.node().height = window.innerHeight;
+                _this.map.node().width = window.innerWidth * _this.dpr;
+                _this.map.node().height = window.innerHeight * _this.dpr;
                 var old_width = _this.width;
                 var old_height = _this.height;
                 _this.width = _this.map.node().width
                 _this.height = _this.map.node().height
 
-                _this.status.style('top', _this.height - _this._stat_hgt).style('height', _this.stat_hgt);
-                _this.menu.style('height', _this.height - _this._stat_hgt)
+                _this.status.style('top', _this.height / _this.dpr - _this._stat_hgt).style('height', _this.stat_hgt);
+                _this.menu.style('height', _this.height / _this.dpr - _this._stat_hgt)
 /*
                 var old_full_width = (old_width * _this.zoom_trans.k);
                 var new_full_width = (_this.width * _this.zoom_trans.k);
@@ -154,10 +155,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             gl.clearColor(0.8, 0.8, 0.8, 1.0);
             gl.clear(gl.COLOR_BUFFER_BIT);
 
-            kx = _this.zoom_trans.k / _this.width;
-            ky = _this.zoom_trans.k / _this.height;
-            tx = (_this.zoom_trans.x - _this.width / 2) / _this.zoom_trans.k;
-            ty = (_this.zoom_trans.y - _this.height / 2) / _this.zoom_trans.k;
+            var px_width = _this.width / _this.dpr;
+            var px_height = _this.height / _this.dpr;
+
+            kx = _this.zoom_trans.k / px_width;
+            ky = _this.zoom_trans.k / px_height;
+            tx = (_this.zoom_trans.x - px_width / 2) / _this.zoom_trans.k;
+            ty = (_this.zoom_trans.y - px_height / 2) / _this.zoom_trans.k;
             zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
 
             for (ilyr in _this.draw_order) {
@@ -965,6 +969,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._callbacks = {};
         this._n_bytes = 52;
         this._obs_file = undefined;
+        this._dpr = window.devicePixelRatio || 1;
 
         this._font_shader = new WGLShader(gl, 'font', _text_vert_shader_src, _frag_shader_src);
         this._font_shader.register_plugin(map_proj);
@@ -1074,7 +1079,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             for (var obvar in this._text_from_ob) {
                 var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.longitude, ob.latitude], 12, 
-                                                     this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v']);
+                                                     this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v'], this._dpr);
                 for (var txti in coords) {
                     this._text_info[obvar][txti].push(coords[txti]);
                 }
@@ -1168,8 +1173,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         ws_rnd = ws_rnd % 10;
         var n_hbarbs = Math.floor(ws_rnd / 5);
 
-        var staff_length = 40;
-        var line_width = 1.5;
+        var staff_length = 40 * this._dpr;
+        var line_width = 1.5 * this._dpr;
         var feat_width = staff_length / 3;
         var feat_space = staff_length / 8;
         
@@ -1308,9 +1313,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         return { 'vert':verts, 'tex':tex_coords };
     };
 
-    this.FontAtlas.prototype.gen_str = function(str, pos, str_hgt, align_h, align_v) {
+    this.FontAtlas.prototype.gen_str = function(str, pos, str_hgt, align_h, align_v, dpr) {
         if (align_h === undefined) { align_h = 'left'; }
         if (align_v === undefined) { align_v = 'top'; }
+        if (dpr === undefined) { dpr = 1; }
 
         var chars = str.split('');
         var verts = [];
@@ -1318,7 +1324,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var anchs = [];
         var str_wid = 0;
         for (ichr in chars) {
-            var coords = this.gen_char(chars[ichr], str_hgt);
+            var coords = this.gen_char(chars[ichr], str_hgt * dpr);
             for (icd in coords.vert) {
                 if (!(icd % 2)) { coords.vert[icd] += str_wid; }
             }
@@ -1339,20 +1345,22 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         verts = [].concat.apply([], verts)
         tex_coords = [].concat.apply([], tex_coords)
 
-        var align_fac_h = -3;
-        var align_fac_v = -3;
+        var offset = 3 * dpr;
+
+        var align_fac_h = -offset;
+        var align_fac_v = -offset;
         if (align_h == 'right') {
-            align_fac_h = str_wid + 3;
+            align_fac_h = str_wid + offset;
         }
         else if (align_h == 'center') {
             align_fac_h = str_wid / 2;
         }
 
         if (align_v == 'bottom') {
-            align_fac_v = str_hgt + 3;
+            align_fac_v = str_hgt * dpr + offset;
         }
         else if (align_v == 'center') {
-            align_fac_v = str_hgt / 2;
+            align_fac_v = str_hgt * dpr / 2;
         }
 
         for (icd in verts) {
