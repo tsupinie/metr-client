@@ -320,7 +320,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         };
 
         this._drag_layers = function() {
-            if (d3.event.sourceEvent.path[0].classList.value !== "drag") {
+            if (d3.event.sourceEvent.target.classList.value !== "drag") {
                 return;
             }
 
