@@ -3,43 +3,19 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     var _mod = this;
     var sprintf = sprintf.sprintf;
 
-    var gui = function() {
+    this.MenuAction = function(action, def_avail) {
+        if (def_avail === undefined) { def_avail = true; }
+
+        this._act = action;
+        this.available = def_avail;
+    };
+
+    this.MenuAction.prototype.perform_action = function() {
+        this._act.bind(this)();
+    };
+
+    var METRGUI = function() {
         var _this = this;
-
-        this._popup_menu = {
-            /* Come up with a better way to add the '>' than add a crap-ton of nbsp's ... */
-            'Geography&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;>': {
-                'US States': {
-                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_cty'); },
-                    'available':false,
-                },
-                'US Counties': {
-                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_st'); },
-                    'available':false,
-                },
-                'US Interstate Highways': {
-                    'action': function() { _this.add_layer(0, ShapeLayer, 'geo', 'us_interstate'); },
-                    'available':true,
-                },
-
-            },
-            'Level 2 Radar': {
-                'action': function() { console.log("Adding Level2 layer"); },
-                'available': true,
-            },
-            'Observations&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;>': {
-                'METAR': {
-                    'action':function() { _this.add_layer(0, ObsLayer, 'metar'); },
-                    'available': true,
-                },
-                'Mesonet': {
-                    'action': function() { _this.add_layer(0, ObsLayer, 'mesonet'); },
-                    'available': true,
-                },
-            },
-        };
-
-        this.draw_order = [];
 
         this.init_map = function() {
             _this.dpr = window.devicePixelRatio || 1;
@@ -63,7 +39,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             _this.menu_tabs = d3.select('#menutabs');
             _this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
             _this.menu_visible = "";
-            _this._active_layer = undefined;
 
             _this.trans_x = 0;
             _this.trans_y = 0;
@@ -75,11 +50,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             _this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
 
-            var gl = _this.map.node().getContext('webgl');
+            _this.layer_container = new LayerContainer(_this._menu_bar_width);
+            _this.layer_container.init();
 
-            _this.add_layer(0, ShapeLayer, 'geo', 'us_cty');
-            _this.add_layer(0, ShapeLayer, 'geo', 'us_st');
-            _this.add_layer(-1, Level2Layer, 'KLGX', 'REF', 0.5);
+            var gl = _this.map.node().getContext('webgl');
 
             d3.json('trebuchet.atlas', function(atlas) {
                 var texture_data = atlas.texture;
@@ -116,9 +90,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 _this.trans_y = -(_this.height - _this.init_height) / 2;
 
                 _this.set_zoom(d3.zoomTransform(_this.map.node()));
-                for (ilyr in _this.draw_order) {
-                    _this.draw_order[ilyr].set_viewport(_this.width, _this.height);
-                }
+                _this.layer_container.set_layer_viewports(_this.width, _this.height);
                 _this.draw();
             });
 
@@ -164,12 +136,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             ty = (_this.zoom_trans.y - px_height / 2) / _this.zoom_trans.k;
             zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
 
-            for (ilyr in _this.draw_order) {
-                _this.draw_order[ilyr].draw(zoom_matrix, _this.zoom_trans.k);
-            }
+            _this.layer_container.draw_layers(zoom_matrix, _this.zoom_trans.k);
         };
 
-        this.add_layer = function(pos, LayerType) {
+        this.create_layer = function(callback, LayerType) {
             var args = Array.prototype.slice.call(arguments, 2);
             var gl = _this.map.node().getContext('webgl');
             args.splice(0, 0, gl, _this.map_geo);
@@ -182,32 +152,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             lyr.register_callback('status', _this.set_status);
             lyr.active = false;
 
-            if (pos == -1) {
-                _this.draw_order.unshift(lyr);
-            }
-            else {
-                _this.draw_order.push(lyr);
-            }
-
-            _this.activate_layer(lyr);
-        };
-
-        this.remove_layer = function(lyr) {
-            var lyr_idx = _this.draw_order.indexOf(lyr);
-            if (lyr_idx === -1) {
-                throw "Item doesn't exist to remove"
-            }
-
-            _this.draw_order.splice(lyr_idx, 1);
-
-            if (lyr.active) {
-                var new_idx = Math.max(lyr_idx - 1, 0);
-                _this.activate_layer(_this.draw_order[new_idx]);
-            }
-
-            if (_this.menu_visible.innerHTML == 'Layers') {
-                _this.show_menu['Layers']();
-            }
+            callback(lyr);
         };
 
         this.set_status = function(layer) {
@@ -246,56 +191,16 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
         };
 
+        this.refresh_menu = function() {
+            if (_this.menu_visible != "") {
+                _this.show_menu[_this.menu_visible.innerHTML]();
+            }
+        };
+
         this.show_menu = {
             'Layers': function() {
                 _this.menu.html("");
-                var ul = _this.menu.append('ul');
-                for (var ilyr = _this.draw_order.length - 1; ilyr > -1; ilyr--) {
-                    var lyr_html = _this.draw_order[ilyr].layer_menu_html();
-                    var lyr_mkr = ul.append('li').on('click', function() {
-                        var n_layers = _this.draw_order.length;
-                        var lyr_index;
-                        for (var lyr of this.parentNode.childNodes.entries()) {
-                            if (lyr[1] == this) {
-                                lyr_index = lyr[0];
-                            }
-                        }
-                        _this.activate_layer(_this.draw_order[n_layers - lyr_index - 1]);
-                    });
-                    lyr_mkr.append('div').attr('class', 'drag').text("\u22ee");
-                    lyr_mkr.append('p').html(lyr_html);
-                    lyr_mkr.append('div')
-                           .attr('class', 'remove')
-                           .text('\u00d7')
-                           .on('click', function() {
-                               var n_layers = _this.draw_order.length;
-                               var lyr_index;
-                               for (var lyr of this.parentNode.parentNode.childNodes.entries()) {
-                                   if (lyr[1] == this.parentNode) {
-                                       lyr_index = lyr[0];
-                                   }
-                               }
-                               _this.remove_layer(_this.draw_order[n_layers - lyr_index - 1]);
-                               _this.draw();
-                               d3.event.stopPropagation();
-                           });
-
-                    if (_this.draw_order[ilyr].active) {
-                        var n_layers = _this.draw_order.length;
-                        var lyr_marker = d3.select(ul.node().childNodes[n_layers - ilyr - 1]);
-                        lyr_marker.attr('class', 'active');
-                    }
-                }
-
-                var width = parseInt(_this._menu_bar_width, 10) - 4;
-                ul.selectAll('li').style('width', width + 'px');
-                ul.selectAll('li').call(d3.drag().on('start', _this._drag_layers));
-
-                ul.append('li').html('+').attr('class', 'addnew').on('click', function() {
-                    var root = d3.select(this).attr('depth', 0)
-                    root.node().options = _this._popup_menu;
-                    _this._add_menu(root); 
-                });
+                _this.layer_container.create_layer_menu(_this.menu);
             },
             'About': function() {
                 _this.menu.html("");
@@ -318,172 +223,335 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 _this.menu_tabs.transition(trans).style('left', '0px');
             }
         };
+    };
 
-        this._drag_layers = function() {
-            if (d3.event.sourceEvent.target.classList.value !== "drag") {
-                return;
+    this.LayerContainer = function(width) {
+        this._draw_order = [];
+        this._active_layer = undefined;
+        this._width = width;
+
+        var _this = this;
+        var menu_adder = function(pos) {
+            return function(lyr) {
+                lyr.menu_action = this;
+                _this.add_layer(lyr, pos);
             }
-
-            var lyr_marker = d3.select(this);
-            var lyr_parent = d3.select(this.parentNode);
-
-            var lyr_index;
-            var lyr_coords = [];
-            for (var lyr of this.parentNode.childNodes.entries()) {
-                var lyr_rect = lyr[1].getBoundingClientRect();
-                if (lyr[1].className != "addnew") {
-                    lyr_coords[lyr[0]] = (lyr_rect.top + lyr_rect.bottom) / 2;
-                }
-                if (lyr[1] == this) {
-                    lyr_index = lyr[0];
-                }
-            }
-
-            var lyr_spacer = d3.select(this.cloneNode(false)).style('visibility', 'hidden').node();
-            this.parentNode.insertBefore(lyr_spacer, this.parentNode.childNodes[lyr_index + 1]);
-
-            var mkr_pos = this.getBoundingClientRect();
-            if (lyr_marker.attr('class') == 'active') {
-                var pad_left = 0;
-                var pad_top = -2;
-            }
-            else {
-                var pad_left = 2;
-                var pad_top = 2;
-            }
-            var dx = d3.event.x - mkr_pos.left + pad_left;
-            var dy = d3.event.y - mkr_pos.top + pad_top;
-
-            lyr_marker.style('position', 'absolute').style('left', mkr_pos.left - pad_left).style('top', mkr_pos.top - pad_top);
-
-            function dragged(d) {
-                lyr_marker.style('left', d3.event.x - dx).style('top', d3.event.y - dy);
-                var mkr_pos = this.getBoundingClientRect();
-                if (lyr_index > 0 && mkr_pos.top < lyr_coords[lyr_index - 1]) {
-                    var swap_node = this.parentNode.childNodes[lyr_index - 1];
-                    this.parentNode.removeChild(swap_node);
-                    this.parentNode.insertBefore(swap_node, this.parentNode.childNodes[lyr_index + 1]);
-
-                    var n_layers = _this.draw_order.length;
-                    var swap_lyr = _this.draw_order[n_layers - (lyr_index - 1) - 1];
-                    _this.draw_order.splice(n_layers - (lyr_index - 1) - 1, 1);
-                    _this.draw_order.splice(n_layers - lyr_index - 1, 0, swap_lyr);
-                    _this.draw()
-
-                    lyr_index--;
-                }
-                else if (lyr_index < lyr_coords.length - 1 && mkr_pos.bottom > lyr_coords[lyr_index + 1]) {
-                    var swap_node = this.parentNode.childNodes[lyr_index + 2];
-                    this.parentNode.removeChild(swap_node);
-                    this.parentNode.insertBefore(swap_node, this.parentNode.childNodes[lyr_index]);
-
-                    var n_layers = _this.draw_order.length;
-                    var swap_lyr = _this.draw_order[n_layers - (lyr_index + 1) - 1];
-                    _this.draw_order.splice(n_layers - (lyr_index + 1) - 1, 1);
-                    _this.draw_order.splice(n_layers - (lyr_index) - 1, 0, swap_lyr);
-                    _this.draw()
-
-                    lyr_index++;
-                }
-            }
-
-            function dragend() {
-                this.parentNode.removeChild(lyr_spacer);
-                lyr_marker.style('position', 'static');
-            }
-
-            d3.event.on('drag', dragged).on('end', dragend);
         };
 
-        this.activate_layer = function(layer) {
-            if (_this._active_layer !== undefined) {
-                _this._active_layer.active = false;
-            }
-
-            layer.active = true;
-            _this._active_layer = layer;
-
-            if (_this.menu_visible.innerHTML == 'Layers') {
-                _this.show_menu['Layers']();
-            }
-
-            layer.set_status(_this.status);
-        };
-
-        this._add_menu = function(root) {
-            var root_rect = root.node().getBoundingClientRect();
-
-            var width = parseInt(_this._menu_bar_width, 10);
-            menu_root = d3.select('#menu').append('ul')
-                                          .attr('id', 'popup' + root.attr('depth'))
-                                          .style('position', 'absolute')
-                                          .style('left', root_rect.left + width - 3)
-                                          .style('top', root_rect.top - 2 + root_rect.height / 3)
-                                          .style('width', root_rect.width)
-                                          .style('height', root_rect.height)
-                                          .style('margin-top', 0);
-            menu_root.node().menu_parent = root;
-
-            function remove_menu(depth) {
-                var sub_menu = d3.select('#menu #popup' + depth);
-                while (!sub_menu.empty()) {
-                    var sub_menu_root = sub_menu.node().menu_parent;
-                    sub_menu.remove();
-
-                    if (sub_menu_root !== undefined) {
-                        if (depth == 0) {
-                            sub_menu_root.on('click', function() { _this._add_menu(d3.select(this)); });
-                        }
-                        else {
-                            sub_menu_root.on('click', add_submenu);
-                        }
-                    }
-
-                    depth++;
-                    sub_menu = d3.select('#menu #popup' + depth);
-                }
-            }
-
-            function add_submenu() {
-                var li = d3.select(this);
-                var submenu = li.node().options;
-                if ('action' in submenu) {
-                    // Leaf node (run the menu action)
-                    if (submenu['available']) {
-                        submenu['action']();
-                        remove_menu(0);
-                        submenu['available'] = false;
-                    }
-                }
-                else {
-                    // Actual submenu (show the submenu)
-                    remove_menu(li.attr('depth'));
-                    _this._add_menu(li); 
-                }
-            }
-
-            for (var opt in root.node().options) {
-                menu_root.append('li')
-                         .style('height', '26px')
-                         .style('line-height', '26px')
-                         .style('vertical-align', 'middle')
-                         .style('padding-left', '3px')
-                         .style('cursor', 'pointer')
-                         .html(opt)
-                         .attr('depth', parseInt(root.attr('depth')) + 1)
-                         .node().options = root.node().options[opt];
-            }
-
-            menu_root.selectAll('li').on('click', add_submenu);
-
-            root.on('click', function() {
-                var item = d3.select(this);
-                var item_depth = item.attr('depth');
-                remove_menu(item_depth);
-            });
+        this._popup_menu = {
+            'Geography': {
+                'US States': new MenuAction(function() {
+                    gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_st');
+                }, false),
+                'US Counties': new MenuAction(function() {
+                    gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_cty');
+                }, false),
+                'US Interstate Highways': new MenuAction(function() {
+                    gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_interstate');
+                }),
+            },
+            'Level 2 Radar': new MenuAction(function() {
+                gui.create_layer(menu_adder(-1).bind(this), Level2Layer, 'KTLX', 'REF', 0.5);
+            }, false),
+            'Observations': {
+                'METAR': new MenuAction(function() {
+                    gui.create_layer(menu_adder(0).bind(this), ObsLayer, 'metar');
+                }),
+                'Mesonet': new MenuAction(function() {
+                    gui.create_layer(menu_adder(0).bind(this), ObsLayer, 'mesonet');
+                }),
+            },
         };
     };
 
+    this.LayerContainer.prototype.init = function() {
+        this._popup_menu['Geography']['US States'].perform_action();
+        this._popup_menu['Geography']['US Counties'].perform_action();
+        this._popup_menu['Level 2 Radar'].perform_action();
+    };
+
+    this.LayerContainer.prototype.save_to_cookie = function() {
+
+    };
+
+    this.LayerContainer.prototype.draw_layers = function(zoom_matrix, zoom_fac) {
+        for (ilyr in this._draw_order) {
+            this._draw_order[ilyr].draw(zoom_matrix, zoom_fac);
+        }
+    };
+
+    this.LayerContainer.prototype.create_layer_menu = function(menu) {
+        var _this = this;
+
+        var ul = menu.append('ul');
+        for (var ilyr = this._draw_order.length - 1; ilyr > -1; ilyr--) {
+            var lyr_html = this._draw_order[ilyr].layer_menu_html();
+            var lyr_mkr = ul.append('li').on('click', function() { _this.activate_layer(_this._layer_from_marker(this)); });
+            lyr_mkr.append('div').attr('class', 'drag').text("\u22ee");
+            lyr_mkr.append('p').html(lyr_html);
+            lyr_mkr.append('div')
+                   .attr('class', 'remove')
+                   .text('\u00d7')
+                   .on('click', function() {
+                       _this.remove_layer(_this._layer_from_marker(this.parentNode));
+                       gui.draw();
+                       d3.event.stopPropagation();
+                   });
+
+            if (this._draw_order[ilyr].active) {
+                var n_layers = this._draw_order.length;
+                var lyr_marker = d3.select(ul.node().childNodes[n_layers - ilyr - 1]);
+                lyr_marker.attr('class', 'active');
+            }
+        }
+
+        var width = parseInt(this._width, 10) - 4;
+        ul.selectAll('li').style('width', width + 'px');
+        ul.selectAll('li').call(d3.drag().on('start', function() { _this._drag_layers(this); }));
+
+        ul.append('li').html('+').attr('class', 'addnew').on('click', function() {
+            var root = d3.select(this).attr('depth', 0)
+            root.node().options = _this._popup_menu;
+            _this._add_menu(root); 
+        });
+    };
+
+    this.LayerContainer.prototype.add_layer = function(lyr, pos) {
+        if (pos == -1) {
+            this._draw_order.unshift(lyr);
+        }
+        else {
+            this._draw_order.push(lyr);
+        }
+
+        this.activate_layer(lyr);
+    };
+
+    this.LayerContainer.prototype.remove_layer = function(lyr) {
+        var lyr_idx = this._index_of_layer(lyr);
+        this._draw_order.splice(lyr_idx, 1);
+
+        lyr.menu_action.available = true;
+
+        if (lyr.active) {
+            var new_idx = Math.max(lyr_idx - 1, 0);
+            this.activate_layer(this._draw_order[new_idx]);
+        }
+
+        gui.refresh_menu();
+    };
+
+    this.LayerContainer.prototype.activate_layer = function(layer) {
+        if (this._active_layer !== undefined) {
+            this._active_layer.active = false;
+        }
+
+        layer.active = true;
+        this._active_layer = layer;
+
+        gui.set_status(layer);
+        gui.refresh_menu();
+    };
+
+    this.LayerContainer.prototype.set_layer_viewports = function(width, height) {
+        for (var ilyr in this._draw_order) {
+            this._draw_order[ilyr].set_viewport(width, height);
+        }
+    };
+
+    this.LayerContainer.prototype._index_of_layer = function(lyr) {
+        var lyr_index = this._draw_order.indexOf(lyr);
+        if (lyr_index == -1) {
+            throw "Layer not found!";
+        }
+        return lyr_index;
+    };
+
+    this.LayerContainer.prototype._index_of_marker = function(mkr) {
+        var n_layers = this._draw_order.length;
+        var mkr_index = -1;
+        for (var lyr of mkr.parentNode.childNodes.entries()) {
+            if (lyr[1] == mkr) {
+                mkr_index = lyr[0];
+            }
+        }
+
+        if (mkr_index == -1) {
+            throw "Marker not found!";
+        }
+        return mkr_index;
+    };
+
+    this.LayerContainer.prototype._layer_from_marker = function(mkr) {
+        var n_layers = this._draw_order.length;
+        var mkr_index = this._index_of_marker(mkr);
+        return this._draw_order[n_layers - mkr_index - 1];
+    };
+
+    this.LayerContainer.prototype._drag_layers = function(target) {
+        if (d3.event.sourceEvent.target.classList.value !== "drag") {
+            return;
+        }
+
+        var lyr_marker = d3.select(target);
+        var lyr_parent = d3.select(target.parentNode);
+
+        var lyr_index = this._index_of_marker(target);
+        var lyr_coords = [];
+        for (var lyr of target.parentNode.childNodes.entries()) {
+            var lyr_rect = lyr[1].getBoundingClientRect();
+            if (lyr[1].className != "addnew") {
+                lyr_coords[lyr[0]] = (lyr_rect.top + lyr_rect.bottom) / 2;
+            }
+        }
+
+        var lyr_spacer = d3.select(target.cloneNode(false)).style('visibility', 'hidden').node();
+        target.parentNode.insertBefore(lyr_spacer, target.parentNode.childNodes[lyr_index + 1]);
+
+        var mkr_pos = target.getBoundingClientRect();
+        if (lyr_marker.attr('class') == 'active') {
+            var pad_left = 0;
+            var pad_top = -2;
+        }
+        else {
+            var pad_left = 2;
+            var pad_top = 2;
+        }
+        var dx = d3.event.x - mkr_pos.left + pad_left;
+        var dy = d3.event.y - mkr_pos.top + pad_top;
+
+        lyr_marker.style('position', 'absolute').style('left', mkr_pos.left - pad_left).style('top', mkr_pos.top - pad_top);
+
+        function dragged(d) {
+            lyr_marker.style('left', d3.event.x - dx).style('top', d3.event.y - dy);
+            var mkr_pos = target.getBoundingClientRect();
+            if (lyr_index > 0 && mkr_pos.top < lyr_coords[lyr_index - 1]) {
+                var swap_node = target.parentNode.childNodes[lyr_index - 1];
+                target.parentNode.removeChild(swap_node);
+                target.parentNode.insertBefore(swap_node, target.parentNode.childNodes[lyr_index + 1]);
+
+                var n_layers = this._draw_order.length;
+                var swap_lyr = this._draw_order[n_layers - (lyr_index - 1) - 1];
+                this._draw_order.splice(n_layers - (lyr_index - 1) - 1, 1);
+                this._draw_order.splice(n_layers - lyr_index - 1, 0, swap_lyr);
+                gui.draw();
+
+                lyr_index--;
+            }
+            else if (lyr_index < lyr_coords.length - 1 && mkr_pos.bottom > lyr_coords[lyr_index + 1]) {
+                var swap_node = target.parentNode.childNodes[lyr_index + 2];
+                target.parentNode.removeChild(swap_node);
+                target.parentNode.insertBefore(swap_node, target.parentNode.childNodes[lyr_index]);
+
+                var n_layers = this._draw_order.length;
+                var swap_lyr = this._draw_order[n_layers - (lyr_index + 1) - 1];
+                this._draw_order.splice(n_layers - (lyr_index + 1) - 1, 1);
+                this._draw_order.splice(n_layers - (lyr_index) - 1, 0, swap_lyr);
+                gui.draw();
+
+                lyr_index++;
+            }
+        }
+
+        function dragend() {
+            target.parentNode.removeChild(lyr_spacer);
+            lyr_marker.style('position', 'static');
+        }
+
+        d3.event.on('drag', dragged.bind(this)).on('end', dragend.bind(this));
+    };
+
+
+    this.LayerContainer.prototype._add_menu = function(root) {
+        var root_rect = root.node().getBoundingClientRect();
+
+        var width = parseInt(this._width, 10);
+        menu_root = d3.select('#menu').append('ul')
+                                      .attr('id', 'popup' + root.attr('depth'))
+                                      .style('position', 'absolute')
+                                      .style('left', root_rect.left + width - 3)
+                                      .style('top', root_rect.top - 2 + root_rect.height / 3)
+                                      .style('width', root_rect.width)
+                                      .style('height', root_rect.height)
+                                      .style('margin-top', 0);
+        menu_root.node().menu_parent = root;
+
+        var _this = this;
+
+        function remove_menu(depth) {
+            var sub_menu = d3.select('#menu #popup' + depth);
+            while (!sub_menu.empty()) {
+                var sub_menu_root = sub_menu.node().menu_parent;
+                sub_menu.remove();
+
+                if (sub_menu_root !== undefined) {
+                    if (depth == 0) {
+                        sub_menu_root.on('click', function() { _this._add_menu(d3.select(this)); });
+                    }
+                    else {
+                        sub_menu_root.on('click', add_submenu);
+                    }
+                }
+
+                depth++;
+                sub_menu = d3.select('#menu #popup' + depth);
+            }
+        }
+
+        function add_submenu() {
+            var li = d3.select(this);
+            var submenu = li.node().options;
+            if (submenu instanceof MenuAction) {
+                // Leaf node (run the menu action)
+                if (submenu.available) {
+                    submenu.perform_action();
+                    remove_menu(0);
+                    submenu.available = false;
+                }
+            }
+            else {
+                // Actual submenu (show the submenu)
+                remove_menu(li.attr('depth'));
+                _this._add_menu(li); 
+            }
+        }
+
+        for (var opt in root.node().options) {
+            menu_item = menu_root.append('li')
+                                 .style('height', '26px')
+                                 .style('line-height', '26px')
+                                 .style('vertical-align', 'middle')
+                                 .style('padding-left', '3px')
+                                 .style('cursor', 'pointer')
+                                 .text(opt)
+                                 .attr('depth', parseInt(root.attr('depth')) + 1)
+
+            if (!(root.node().options[opt] instanceof MenuAction)) {
+                menu_item.append('div')
+                         .style('float', 'right')
+                         .style('height', '26px')
+                         .style('line-height', '26px')
+                         .style('vertical-align', 'middle')
+                         .style('padding', '0px')
+                         .style('width', '12px')
+                         .style('margin', '0px')
+                         .text('>')
+            }
+            menu_item.node().options = root.node().options[opt];
+        }
+
+        menu_root.selectAll('li').on('click', add_submenu);
+
+        root.on('click', function() {
+            var item = d3.select(this);
+            var item_depth = item.attr('depth');
+            remove_menu(item_depth);
+        });
+    };
+
+   /********************
+    * DataLayer code
+    ********************/
     this.DataLayer = function(gl) {
         this._gl = gl;
         this._callbacks = {};
@@ -1555,6 +1623,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         console.log(gl.getProgramInfoLog(shader_prog));
         gl.deleteProgram(shader_prog);
     };
- 
-    return new gui()
+
+    var gui = new METRGUI(); 
+
+    return gui;
 })
