@@ -470,10 +470,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                                       .attr('id', 'popup' + root.attr('depth'))
                                       .style('position', 'absolute')
                                       .style('left', root_rect.left + width - 3)
-                                      .style('top', root_rect.top - 2 + root_rect.height / 3)
+                                      .style('top', root_rect.top - 2)
                                       .style('width', root_rect.width)
-                                      .style('height', root_rect.height)
-                                      .style('margin-top', 0);
+                                      .style('margin-top', 0)
+                                      .style('background', 'rgba(0, 0, 0, 0.3)');
         menu_root.node().menu_parent = root;
 
         var _this = this;
