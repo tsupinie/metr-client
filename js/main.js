@@ -9,11 +9,8 @@ requirejs.config({
     }
 });
 
-requirejs(['metr/io', 'metr/gui'], 
-    function(io, gui) {
-        var time = new Date(2017, 9, 1, 23, 6);
-//      var url = io.download_level2('KRAX', time, 'REF', 0.5);
-
+requirejs(['metr/gui'], 
+    function(gui) {
         gui.init_map();
     }   
 )

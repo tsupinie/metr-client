@@ -15,214 +15,215 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     var METRGUI = function() {
+    };
+
+    METRGUI.prototype.init_map = function() {
         var _this = this;
 
-        this.init_map = function() {
-            _this.dpr = window.devicePixelRatio || 1;
-            _this.map = d3.select('#main');
+        this.dpr = window.devicePixelRatio || 1;
+        this.map = d3.select('#main');
+        this.map.node().width = window.innerWidth * this.dpr;
+        this.map.node().height = window.innerHeight * this.dpr;
+        this.map.style('background-color', '#cccccc');
+
+        this.width = this.map.node().width
+        this.height = this.map.node().height
+        this.init_width = this.width;
+        this.init_height = this.height;
+
+        this._menu_bar_width = '175px';
+        this._stat_hgt = 25
+        this.status = d3.select('#status');
+        this.status.style('height', this._stat_hgt).style('top', this.height / this.dpr - this._stat_hgt)
+
+        this.menu = d3.select('#menu');
+        this.menu.style('height', this.height / this.dpr - this._stat_hgt)
+        this.menu_tabs = d3.select('#menutabs');
+        this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
+        this.menu_visible = "";
+
+        this.trans_x = 0;
+        this.trans_y = 0;
+        this.set_zoom(d3.zoomTransform(this.map.node()));
+
+        var parallels = [30, 45];
+        var std_lon = -97.5;
+        var std_lat = 37.5;
+
+        this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
+
+        this.layer_container = new LayerContainer(this._menu_bar_width);
+        this.layer_container.init();
+
+        var gl = this.map.node().getContext('webgl');
+
+        d3.json('trebuchet.atlas', function(atlas) {
+            var texture_data = atlas.texture;
+            atlas.texture = new Image();
+            atlas.texture.onload = function(event) {
+                _mod.font_atlas = new FontAtlas(atlas);
+            }
+            atlas.texture.src = 'data:image/png;base64,' + texture_data;
+        });
+
+        window.addEventListener('resize', function() {
             _this.map.node().width = window.innerWidth * _this.dpr;
             _this.map.node().height = window.innerHeight * _this.dpr;
-            _this.map.style('background-color', '#cccccc');
-
+            var old_width = _this.width;
+            var old_height = _this.height;
             _this.width = _this.map.node().width
             _this.height = _this.map.node().height
-            _this.init_width = _this.width;
-            _this.init_height = _this.height;
 
-            _this._menu_bar_width = '175px';
-            _this._stat_hgt = 25
-            _this.status = d3.select('#status');
-            _this.status.style('height', _this._stat_hgt).style('top', _this.height / _this.dpr - _this._stat_hgt)
-
-            _this.menu = d3.select('#menu');
+            _this.status.style('top', _this.height / _this.dpr - _this._stat_hgt).style('height', _this.stat_hgt);
             _this.menu.style('height', _this.height / _this.dpr - _this._stat_hgt)
-            _this.menu_tabs = d3.select('#menutabs');
-            _this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
-            _this.menu_visible = "";
-
-            _this.trans_x = 0;
-            _this.trans_y = 0;
-            _this.set_zoom(d3.zoomTransform(_this.map.node()));
-
-            var parallels = [30, 45];
-            var std_lon = -97.5;
-            var std_lat = 37.5;
-
-            _this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
-
-            _this.layer_container = new LayerContainer(_this._menu_bar_width);
-            _this.layer_container.init();
-
-            var gl = _this.map.node().getContext('webgl');
-
-            d3.json('trebuchet.atlas', function(atlas) {
-                var texture_data = atlas.texture;
-                atlas.texture = new Image();
-                atlas.texture.onload = function(event) {
-                    _mod.font_atlas = new FontAtlas(atlas);
-                }
-                atlas.texture.src = 'data:image/png;base64,' + texture_data;
-            });
-
-            window.addEventListener('resize', function() {
-                _this.map.node().width = window.innerWidth * _this.dpr;
-                _this.map.node().height = window.innerHeight * _this.dpr;
-                var old_width = _this.width;
-                var old_height = _this.height;
-                _this.width = _this.map.node().width
-                _this.height = _this.map.node().height
-
-                _this.status.style('top', _this.height / _this.dpr - _this._stat_hgt).style('height', _this.stat_hgt);
-                _this.menu.style('height', _this.height / _this.dpr - _this._stat_hgt)
 /*
-                var old_full_width = (old_width * _this.zoom_trans.k);
-                var new_full_width = (_this.width * _this.zoom_trans.k);
-                var old_full_height = (old_height * _this.zoom_trans.k);
-                var new_full_height = (_this.height * _this.zoom_trans.k);
+            var old_full_width = (old_width * _this.zoom_trans.k);
+            var new_full_width = (_this.width * _this.zoom_trans.k);
+            var old_full_height = (old_height * _this.zoom_trans.k);
+            var new_full_height = (_this.height * _this.zoom_trans.k);
 
-                var new_x = new_full_width * _this.zoom_trans.x / old_full_width;
-                var new_y = new_full_height * _this.zoom_trans.y / old_full_height;
-                _this.trans_x = (new_x - _this.zoom_trans.x) / _this.zoom_trans.k 
-                _this.trans_y = (new_y - _this.zoom_trans.y) / _this.zoom_trans.k
+            var new_x = new_full_width * _this.zoom_trans.x / old_full_width;
+            var new_y = new_full_height * _this.zoom_trans.y / old_full_height;
+            _this.trans_x = (new_x - _this.zoom_trans.x) / _this.zoom_trans.k 
+            _this.trans_y = (new_y - _this.zoom_trans.y) / _this.zoom_trans.k
 */
 
-                _this.trans_x = -(_this.width - _this.init_width) / 2;
-                _this.trans_y = -(_this.height - _this.init_height) / 2;
+            _this.trans_x = -(_this.width - _this.init_width) / 2;
+            _this.trans_y = -(_this.height - _this.init_height) / 2;
 
-                _this.set_zoom(d3.zoomTransform(_this.map.node()));
-                _this.layer_container.set_layer_viewports(_this.width, _this.height);
-                _this.draw();
-            });
-
-            var trans = d3.zoomIdentity
-            if (utils.get_cookie('zoom_k') !== undefined) {
-                var zoom_k = utils.get_cookie('zoom_k');
-                var zoom_x = utils.get_cookie('zoom_x');
-                var zoom_y = utils.get_cookie('zoom_y');
-
-                trans = trans.translate(zoom_x, zoom_y).scale(zoom_k);
-            }
-
-            var zoom = d3.zoom().scaleExtent([0.5, 480]).on("zoom", _this.zoom)
-            _this.map.call(zoom).call(zoom.transform, trans);
-
-        };
-
-        this.zoom = function() {
-            utils.set_cookie('zoom_k', d3.event.transform.k.toString());
-            utils.set_cookie('zoom_x', d3.event.transform.x.toString());
-            utils.set_cookie('zoom_y', d3.event.transform.y.toString());
-
-            _this.set_zoom(d3.event.transform);
+            _this.set_zoom(d3.zoomTransform(_this.map.node()));
+            _this.layer_container.set_layer_viewports(_this.width, _this.height);
             _this.draw();
-        };
+        });
 
-        this.set_zoom = function(base_trans) {
-            _this.zoom_trans = base_trans.translate(_this.width / 2 + _this.trans_x, _this.height / 2 + _this.trans_y);
+        var trans = d3.zoomIdentity
+        if (utils.get_cookie('zoom_k') !== undefined) {
+            var zoom_k = utils.get_cookie('zoom_k');
+            var zoom_x = utils.get_cookie('zoom_x');
+            var zoom_y = utils.get_cookie('zoom_y');
+
+            trans = trans.translate(zoom_x, zoom_y).scale(zoom_k);
         }
 
-        this.draw = function() {
-            var gl = _this.map.node().getContext('webgl');
-            gl.viewport(0, 0, _this.width, _this.height);
-            gl.clearColor(0.8, 0.8, 0.8, 1.0);
-            gl.clear(gl.COLOR_BUFFER_BIT);
+        var zoom = d3.zoom().scaleExtent([0.5, 480]).on("zoom", function() { _this.zoom(); })
+        this.map.call(zoom).call(zoom.transform, trans);
 
-            var px_width = _this.width / _this.dpr;
-            var px_height = _this.height / _this.dpr;
+    };
 
-            kx = _this.zoom_trans.k / px_width;
-            ky = _this.zoom_trans.k / px_height;
-            tx = (_this.zoom_trans.x - px_width / 2) / _this.zoom_trans.k;
-            ty = (_this.zoom_trans.y - px_height / 2) / _this.zoom_trans.k;
-            zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
+    METRGUI.prototype.zoom = function() {
+        utils.set_cookie('zoom_k', d3.event.transform.k.toString());
+        utils.set_cookie('zoom_x', d3.event.transform.x.toString());
+        utils.set_cookie('zoom_y', d3.event.transform.y.toString());
 
-            _this.layer_container.draw_layers(zoom_matrix, _this.zoom_trans.k);
-        };
+        this.set_zoom(d3.event.transform);
+        this.draw();
+    };
 
-        this.create_layer = function(callback, LayerType) {
-            var args = Array.prototype.slice.call(arguments, 2);
-            var gl = _this.map.node().getContext('webgl');
-            args.splice(0, 0, gl, _this.map_geo);
+    METRGUI.prototype.set_zoom = function(base_trans) {
+        this.zoom_trans = base_trans.translate(this.width / 2 + this.trans_x, this.height / 2 + this.trans_y);
+    }
 
-            var lyr = Object.create(LayerType.prototype);
-            LayerType.apply(lyr, args);
+    METRGUI.prototype.draw = function() {
+        var gl = this.map.node().getContext('webgl');
+        gl.viewport(0, 0, this.width, this.height);
+        gl.clearColor(0.8, 0.8, 0.8, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
 
-            lyr.set_viewport(_this.width, _this.height);
-            lyr.register_callback('redraw', _this.draw);
-            lyr.register_callback('status', _this.set_status);
-            lyr.active = false;
+        var px_width = this.width / this.dpr;
+        var px_height = this.height / this.dpr;
 
-            callback(lyr);
-        };
+        kx = this.zoom_trans.k / px_width;
+        ky = this.zoom_trans.k / px_height;
+        tx = (this.zoom_trans.x - px_width / 2) / this.zoom_trans.k;
+        ty = (this.zoom_trans.y - px_height / 2) / this.zoom_trans.k;
+        zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
 
-        this.set_status = function(layer) {
-            layer.set_status(_this.status);
-        };
+        this.layer_container.draw_layers(zoom_matrix, this.zoom_trans.k);
+    };
 
-        this.toggle_menu = function(menu_item) {
-            var unselected = "rgba(0, 0, 0, 0.6)";
-            var selected = "rgba(77, 77, 77, 0.6)";
-            var menu_name = menu_item.innerHTML;
-            if (_this.menu_visible == menu_item) {
-                _this.menu.node().style.background = unselected;
-                menu_item.style.background = unselected;
-                _this.toggle_menu_bar();
+    METRGUI.prototype.create_layer = function(callback, LayerType) {
+        var args = Array.prototype.slice.call(arguments, 2);
+        var gl = this.map.node().getContext('webgl');
+        args.splice(0, 0, gl, this.map_geo);
 
-                _this.menu_visible = "";
+        var lyr = Object.create(LayerType.prototype);
+        LayerType.apply(lyr, args);
+
+        lyr.set_viewport(this.width, this.height);
+        lyr.active = false;
+
+        callback(lyr);
+    };
+
+    METRGUI.prototype.set_status = function(layer) {
+        layer.set_status(this.status);
+    };
+
+    METRGUI.prototype.toggle_menu = function(menu_item) {
+        var unselected = "rgba(0, 0, 0, 0.6)";
+        var selected = "rgba(77, 77, 77, 0.6)";
+        var menu_name = menu_item.innerHTML;
+        if (this.menu_visible == menu_item) {
+            this.menu.node().style.background = unselected;
+            menu_item.style.background = unselected;
+            this.toggle_menu_bar();
+
+            this.menu_visible = "";
+        }
+        else {
+            if (this.menu_visible != "") {
+                this.menu_visible.style.background = unselected;
             }
-            else {
-                if (_this.menu_visible != "") {
-                    _this.menu_visible.style.background = unselected;
-                }
-                _this.menu.node().style.background = selected;
-                menu_item.style.background = selected;
+            this.menu.node().style.background = selected;
+            menu_item.style.background = selected;
 
-                if (_this.menu_visible == "") {
-                    _this.toggle_menu_bar();
-                }
-
-                try {
-                    _this.show_menu[menu_item.innerHTML]();
-                }
-                catch (err) {
-                    _this.show_menu['default']();
-                }
-                _this.menu_visible = menu_item;
+            if (this.menu_visible == "") {
+                this.toggle_menu_bar();
             }
+
+            try {
+                this.show_menu(menu_item.innerHTML);
+            }
+            catch (err) {
+                this.show_menu('default');
+            }
+            this.menu_visible = menu_item;
+        }
+    };
+
+    METRGUI.prototype.refresh_menu = function() {
+        if (this.menu_visible != "") {
+            this.show_menu[this.menu_visible.innerHTML]();
+        }
+    };
+
+    METRGUI.prototype.show_menu = function(menu) {
+        this.menu.html("");
+
+        var procedures = {
+            'Layers': (function() {
+                this.layer_container.create_layer_menu(this.menu);
+            }).bind(this),
+            'About': (function() {
+                this.menu.append('div').html('<h1>METR</h1>&copy; 2017 Tim Supinie');
+            }).bind(this),
+            'default': (function() {}).bind(this)
         };
 
-        this.refresh_menu = function() {
-            if (_this.menu_visible != "") {
-                _this.show_menu[_this.menu_visible.innerHTML]();
-            }
-        };
+        procedures[menu]();
+    };
 
-        this.show_menu = {
-            'Layers': function() {
-                _this.menu.html("");
-                _this.layer_container.create_layer_menu(_this.menu);
-            },
-            'About': function() {
-                _this.menu.html("");
-                _this.menu.append('div').html('<h1>METR</h1>&copy; 2017 Tim Supinie');
-            },
-            'default': function() {
-                _this.menu.html("");
-            }
-        };
-
-        this.toggle_menu_bar = function() {
-            var trans = d3.transition().duration(500);
-            if (_this.menu_visible == "") {
-                _this.menu.style('width', _this._menu_bar_width).style('left', '-' + _this._menu_bar_width);
-                _this.menu.transition(trans).style('left', '0px');
-                _this.menu_tabs.transition(trans).style('left', _this._menu_bar_width);
-            }
-            else {
-                _this.menu.transition(trans).style('left', '-' + _this._menu_bar_width);
-                _this.menu_tabs.transition(trans).style('left', '0px');
-            }
-        };
+    METRGUI.prototype.toggle_menu_bar = function() {
+        var trans = d3.transition().duration(500);
+        if (this.menu_visible == "") {
+            this.menu.style('width', this._menu_bar_width).style('left', '-' + this._menu_bar_width);
+            this.menu.transition(trans).style('left', '0px');
+            this.menu_tabs.transition(trans).style('left', this._menu_bar_width);
+        }
+        else {
+            this.menu.transition(trans).style('left', '-' + this._menu_bar_width);
+            this.menu_tabs.transition(trans).style('left', '0px');
+        }
     };
 
     this.LayerContainer = function(width) {
@@ -251,7 +252,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 }),
             },
             'Level 2 Radar': new MenuAction(function() {
-                gui.create_layer(menu_adder(-1).bind(this), Level2Layer, 'KTLX', 'REF', 0.5);
+                gui.create_layer(menu_adder(-1).bind(this), Level2Layer, 'KICT', 'REF', 0.5);
             }, false),
             'Observations': {
                 'METAR': new MenuAction(function() {
@@ -554,11 +555,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     ********************/
     this.DataLayer = function(gl) {
         this._gl = gl;
-        this._callbacks = {};
-    };
-
-    this.DataLayer.prototype.register_callback = function(action, cb) {
-        this._callbacks[action] = cb;
     };
 
     this.DataLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
@@ -602,8 +598,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._gl = gl;
         this.cls = cls;
         this.name = name;
-
-        this._callbacks = {};
 
         this._shader = new WGLShader(gl, 'shape', _vert_shader_src, _frag_shader_src);
         this._shader.register_plugin(map_proj);
@@ -657,7 +651,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
             ipp += 2;
         }
-        this._callbacks['redraw']();
+        gui.draw();
     };
 
     this.ShapeLayer.prototype.set_status = function(status_bar) {
@@ -752,7 +746,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         `;
 
         this._gl = gl;
-        this._callbacks = {};
 
         this.site = site;
         this.field = field;
@@ -854,9 +847,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.register_texture('radar', 'u_tex', {'sizex':tex_size_x, 'sizey':tex_size_y, 'image':refl_img});
 
         if (this.active) {
-            this._callbacks['status'](this);
+            gui.set_status(this);
         }
-        this._callbacks['redraw']();
+        gui.draw();
     };
 
     this.Level2Layer.prototype.set_status = function(status_bar) {
@@ -1034,7 +1027,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this._gl = gl;
         this.source = source;
-        this._callbacks = {};
         this._n_bytes = 52;
         this._obs_file = undefined;
         this._dpr = window.devicePixelRatio || 1;
@@ -1168,9 +1160,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         if (this.active) {
-            this._callbacks['status'](this);
+            gui.set_status(this);
         }
-        this._callbacks['redraw']();
+        gui.draw();
     };
 
     this.ObsLayer.prototype.set_status = function(status_bar) {
