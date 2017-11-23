@@ -216,7 +216,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 this.layer_container.create_layer_menu(this.menu);
             }).bind(this),
             'About': (function() {
-                this.menu.append('div').html('<h1>METR</h1>&copy; 2017 Tim Supinie');
+                this.menu.append('div')
+                         .attr('id', 'about')
+                         .html('<h1>METR</h1>' +
+                               '<h3>Nowcasting Tool</h3>' +
+                               '<p>v1.0 (1 December 2017)</p>' +
+                               '<p>&copy; 2017 Tim Supinie</p>' +
+                               '<p>I\'d like to thank the Oklahoma Climate Survey for their wonderful WeatherScope program, to which I consider METR a direct successor.</p>');
             }).bind(this),
             'default': (function() {}).bind(this)
         };
@@ -254,7 +260,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
         };
 
-        this.map_picker = new MapPicker(this.map_geo, data, function(id) { 
+        this.map_picker = new MapPicker(this.map_geo, data, function(id) {
+            _this.map_picker.clear();
+            // TODO: Add a dropdown menu to select field
             gui.create_layer(menu_adder(-1), Level2Layer, id, 'REF', 0.5);
         });
 
@@ -281,7 +289,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
           .style('visibility', 'hidden')
           .text(function(d) { return d['text']; })
           .on('click', function() {
-              d3.selectAll('div.picker').remove();
               callback(d3.select(this).text()); 
           })
     };
@@ -305,6 +312,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
           .style('top', function(d) { return d['y_pix'] - height / 2; })
           .style('visibility', 'visible')
     };
+
+    this.MapPicker.prototype.clear = function() {
+        d3.selectAll('div.picker').remove();
+    }
 
     this.LayerContainer = function(width) {
         this._draw_order = [];

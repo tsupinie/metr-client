@@ -173,9 +173,18 @@ div#menu div {
     -o-user-select: none;
 }
 
-div#menu h1 {
+div#about h1 {
     width: 100%;
     text-align: center;
+}
+
+div#about h3 {
+    width:100%;
+    text-align: center;
+}
+
+div#about p {
+    font-size: 0.9em;
 }
 
 div.picker {
