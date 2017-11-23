@@ -52,6 +52,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
 
+        io.register_handler('gui', this.receive_data.bind(this));
+        io.request({'type':'gui', 'static':'wsr88ds'});
+
         this.layer_container = new LayerContainer(this._menu_bar_width);
         this.layer_container.init();
 
@@ -107,8 +110,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         var zoom = d3.zoom().scaleExtent([0.5, 480]).on("zoom", function() { _this.zoom(); })
         this.map.call(zoom).call(zoom.transform, trans);
-
     };
+
+    METRGUI.prototype.receive_data = function(data) {
+        if ('wsr88ds' in data) {
+            this.wsr88ds = data['wsr88ds'];
+        }
+    }
 
     METRGUI.prototype.zoom = function() {
         utils.set_cookie('zoom_k', d3.event.transform.k.toString());
@@ -138,6 +146,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         ty = (this.zoom_trans.y - px_height / 2) / this.zoom_trans.k;
         zoom_matrix = [kx, 0, kx * tx, 0, -ky, -ky * ty, 0, 0, 1]
 
+        if (this.map_picker !== undefined) {
+            this.map_picker.draw(this.zoom_trans);
+        }
         this.layer_container.draw_layers(zoom_matrix, this.zoom_trans.k);
     };
 
@@ -193,7 +204,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     METRGUI.prototype.refresh_menu = function() {
         if (this.menu_visible != "") {
-            this.show_menu[this.menu_visible.innerHTML]();
+            this.show_menu(this.menu_visible.innerHTML);
         }
     };
 
@@ -226,6 +237,75 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
     };
 
+    METRGUI.prototype.level2_picker = function(menu_action) {
+        var data = [];
+        for (idat in this.wsr88ds) {
+            data[idat] = {};
+            data[idat]['latitude'] = this.wsr88ds[idat]['latitude'];
+            data[idat]['longitude'] = this.wsr88ds[idat]['longitude'];
+            data[idat]['text'] = this.wsr88ds[idat]['id'];
+        }
+
+        var _this = this;
+        var menu_adder = function(pos) {
+            return function(lyr) {
+                lyr.menu_action = menu_action;
+                _this.layer_container.add_layer(lyr, pos);
+            }
+        };
+
+        this.map_picker = new MapPicker(this.map_geo, data, function(id) { 
+            gui.create_layer(menu_adder(-1), Level2Layer, id, 'REF', 0.5);
+        });
+
+        this.draw();
+    };
+
+    this.MapPicker = function(map_proj, data, callback) {
+        this.map_proj = map_proj;
+        this.data = data
+
+        for (var idat in this.data) {
+            pt = this.map_proj.map([this.data[idat]['longitude'], this.data[idat]['latitude']]);
+            this.data[idat]['x_proj'] = pt[0];
+            this.data[idat]['y_proj'] = pt[1];
+        }
+
+        d3.select('body')
+          .selectAll('div.picker')
+          .data(this.data)
+          .enter()
+          .append('div')
+          .attr('class', 'picker')
+          .style('position', 'absolute')
+          .style('visibility', 'hidden')
+          .text(function(d) { return d['text']; })
+          .on('click', function() {
+              d3.selectAll('div.picker').remove();
+              callback(d3.select(this).text()); 
+          })
+    };
+
+    this.MapPicker.prototype.draw = function(zoom_trans) {
+        for (var idat in this.data) {
+            var pt = zoom_trans.apply([this.data[idat]['x_proj'], this.data[idat]['y_proj']]);
+            this.data[idat]['x_pix'] = pt[0];
+            this.data[idat]['y_pix'] = pt[1];
+        }
+
+        var width = 50;
+        var height = 26;
+
+        d3.selectAll('div.picker')
+          .data(this.data)
+          .style('width', width)
+          .style('height', height)
+          .style('line-height', height + 'px')
+          .style('left', function(d) { return d['x_pix'] - width / 2; })
+          .style('top', function(d) { return d['y_pix'] - height / 2; })
+          .style('visibility', 'visible')
+    };
+
     this.LayerContainer = function(width) {
         this._draw_order = [];
         this._active_layer = undefined;
@@ -252,8 +332,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 }),
             },
             'Level 2 Radar': new MenuAction(function() {
-                gui.create_layer(menu_adder(-1).bind(this), Level2Layer, 'KICT', 'REF', 0.5);
-            }, false),
+                gui.level2_picker(this);
+            }),
             'Observations': {
                 'METAR': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ObsLayer, 'metar');
@@ -268,7 +348,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     this.LayerContainer.prototype.init = function() {
         this._popup_menu['Geography']['US States'].perform_action();
         this._popup_menu['Geography']['US Counties'].perform_action();
-        this._popup_menu['Level 2 Radar'].perform_action();
+//      this._popup_menu['Level 2 Radar'].perform_action();
     };
 
     this.LayerContainer.prototype.save_to_cookie = function() {
