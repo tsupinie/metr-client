@@ -3,6 +3,118 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     var _mod = this;
     var sprintf = sprintf.sprintf;
 
+    this.Menu = function(tree, width) {
+        this.tree = tree;
+        this._width = width
+        this._depth = 0;
+        this._setup(this);
+    };
+
+    this.Menu.prototype._setup = function(parent) {
+        if (parent === this) { 
+            this._parent = undefined;
+        }
+        else {
+            this._parent = parent
+            this._depth = parent._depth + 1;
+            this._width = parent._width;
+        }
+
+        for (var ichl in this.tree) {
+            if (this.tree[ichl] instanceof Menu) {
+                this.tree[ichl]._setup(this);
+            }
+        }
+    };
+
+    this.Menu.prototype.show = function(root) {
+        var root_rect = root.node().getBoundingClientRect();
+        remove_menu(this._depth);
+        menu_root = d3.select('body').append('ul')
+                                     .attr('id', 'popup' + this._depth)
+                                     .style('position', 'absolute')
+                                     .style('left', root_rect.right + 3)
+                                     .style('top', root_rect.top - 2)
+                                     .style('width', this._width)
+                                     .style('margin-top', 0)
+                                     .style('z-index', 15)
+                                     .style('background', 'rgba(0, 0, 0, 0.3)');
+
+        root.node().sub_menu = menu_root.node();
+        menu_root.node().menu_parent = root;
+        var _this = this;
+
+        function remove_menu(depth) {
+            var sub_menu = d3.select('#popup' + depth);
+            while (!sub_menu.empty()) {
+                var sub_menu_root = sub_menu.node().menu_parent;
+                sub_menu.remove();
+
+                if (sub_menu_root !== undefined) {
+                    if (depth == 0) {
+                        sub_menu_root.on('click', function() { _this.show(d3.select(this)); });
+                    }
+                    else {
+                        sub_menu_root.on('click', add_submenu);
+                    }
+                }
+
+                depth++;
+                sub_menu = d3.select('#popup' + depth);
+            }
+        }
+
+        function add_submenu() {
+            if (this.menu instanceof MenuAction) {
+                // Leaf node (run the menu action)
+                if (this.menu.available) {
+                    this.menu.perform_action();
+                    remove_menu(0);
+                    this.menu.available = false;
+                }
+            }
+            else {
+                // Actual submenu (show the submenu)
+                this.menu.show(d3.select(this));
+            }
+        }
+
+        for (var opt in this.tree) {
+            menu_item = menu_root.append('li')
+                                 .style('height', '26px')
+                                 .style('line-height', '26px')
+                                 .style('vertical-align', 'middle')
+                                 .style('padding-left', '3px')
+                                 .style('cursor', 'pointer')
+                                 .style('margin', '2px')
+                                 .style('background-color', '#222222')
+                                 .style('color', '#ffffff')
+                                 .style('font-size', '10pt')
+                                 .style('border-radius', '2px')
+                                 .style('user-select', 'none')
+                                 .text(opt)
+
+            if (this.tree[opt] instanceof Menu) {
+                menu_item.append('div')
+                         .style('float', 'right')
+                         .style('height', '26px')
+                         .style('line-height', '26px')
+                         .style('vertical-align', 'middle')
+                         .style('padding', '0px')
+                         .style('width', '12px')
+                         .style('margin', '0px')
+                         .text('>')
+            }
+            menu_item.node().menu = this.tree[opt];
+        }
+
+        menu_root.selectAll('li').on('click', add_submenu);
+
+        root.on('click', function() {
+            remove_menu(_this._depth);
+        });       
+    };
+
     this.MenuAction = function(action, def_avail) {
         if (def_avail === undefined) { def_avail = true; }
 
@@ -260,10 +372,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
         };
 
-        this.map_picker = new MapPicker(this.map_geo, data, function(id) {
-            _this.map_picker.clear();
-            // TODO: Add a dropdown menu to select field
-            gui.create_layer(menu_adder(-1), Level2Layer, id, 'REF', 0.5);
+        this.map_picker = new MapPicker(this.map_geo, data, function(root) {
+            var _popup = new Menu({
+                'Reflectivity': new MenuAction(function () {
+                    _this.map_picker.clear();
+                    gui.create_layer(menu_adder(-1), Level2Layer, root.text(), 'REF', 0.5);
+                }),
+                'Velocity': new MenuAction(function () {
+                    _this.map_picker.clear();
+                    gui.create_layer(menu_adder(-1), Level2Layer, root.text(), 'VEL', 0.5);
+                }),
+            }, '100px')
+            _popup.show(root)
         });
 
         this.draw();
@@ -287,9 +407,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
           .attr('class', 'picker')
           .style('position', 'absolute')
           .style('visibility', 'hidden')
+          .append('div')
           .text(function(d) { return d['text']; })
           .on('click', function() {
-              callback(d3.select(this).text()); 
+              callback(d3.select(this)); 
           })
     };
 
@@ -301,16 +422,26 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         var width = 50;
-        var height = 26;
+        var height = 30;
 
         d3.selectAll('div.picker')
           .data(this.data)
           .style('width', width)
-          .style('height', height)
-          .style('line-height', height + 'px')
+          .style('height', height) 
           .style('left', function(d) { return d['x_pix'] - width / 2; })
           .style('top', function(d) { return d['y_pix'] - height / 2; })
           .style('visibility', 'visible')
+          .select('div')
+          .style('height', (height - 4))
+          .style('line-height', (height - 4) + 'px')
+          .each(function(d) {
+              if (this.sub_menu !== undefined) {
+                  var root_rect = this.getBoundingClientRect();
+                  d3.select(this.sub_menu)
+                    .style('left', root_rect.right + 3)
+                    .style('top', root_rect.top - 2);
+              }
+          })
     };
 
     this.MapPicker.prototype.clear = function() {
@@ -330,8 +461,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
         };
 
-        this._popup_menu = {
-            'Geography': {
+        this._popup_menu = new Menu({
+            'Geography': new Menu({
                 'US States': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_st');
                 }, false),
@@ -341,25 +472,24 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 'US Interstate Highways': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_interstate');
                 }),
-            },
+            }),
             'Level 2 Radar': new MenuAction(function() {
                 gui.level2_picker(this);
             }),
-            'Observations': {
+            'Observations': new Menu({
                 'METAR': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ObsLayer, 'metar');
                 }),
                 'Mesonet': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ObsLayer, 'mesonet');
                 }),
-            },
-        };
+            }),
+        }, '165px');
     };
 
     this.LayerContainer.prototype.init = function() {
-        this._popup_menu['Geography']['US States'].perform_action();
-        this._popup_menu['Geography']['US Counties'].perform_action();
-//      this._popup_menu['Level 2 Radar'].perform_action();
+        this._popup_menu.tree['Geography'].tree['US States'].perform_action();
+        this._popup_menu.tree['Geography'].tree['US Counties'].perform_action();
     };
 
     this.LayerContainer.prototype.save_to_cookie = function() {
@@ -403,8 +533,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         ul.append('li').html('+').attr('class', 'addnew').on('click', function() {
             var root = d3.select(this).attr('depth', 0)
-            root.node().options = _this._popup_menu;
-            _this._add_menu(root); 
+            _this._popup_menu.show(root); 
         });
     };
 
@@ -551,94 +680,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         d3.event.on('drag', dragged.bind(this)).on('end', dragend.bind(this));
-    };
-
-
-    this.LayerContainer.prototype._add_menu = function(root) {
-        var root_rect = root.node().getBoundingClientRect();
-
-        var width = parseInt(this._width, 10);
-        menu_root = d3.select('#menu').append('ul')
-                                      .attr('id', 'popup' + root.attr('depth'))
-                                      .style('position', 'absolute')
-                                      .style('left', root_rect.left + width - 3)
-                                      .style('top', root_rect.top - 2)
-                                      .style('width', root_rect.width)
-                                      .style('margin-top', 0)
-                                      .style('background', 'rgba(0, 0, 0, 0.3)');
-        menu_root.node().menu_parent = root;
-
-        var _this = this;
-
-        function remove_menu(depth) {
-            var sub_menu = d3.select('#menu #popup' + depth);
-            while (!sub_menu.empty()) {
-                var sub_menu_root = sub_menu.node().menu_parent;
-                sub_menu.remove();
-
-                if (sub_menu_root !== undefined) {
-                    if (depth == 0) {
-                        sub_menu_root.on('click', function() { _this._add_menu(d3.select(this)); });
-                    }
-                    else {
-                        sub_menu_root.on('click', add_submenu);
-                    }
-                }
-
-                depth++;
-                sub_menu = d3.select('#menu #popup' + depth);
-            }
-        }
-
-        function add_submenu() {
-            var li = d3.select(this);
-            var submenu = li.node().options;
-            if (submenu instanceof MenuAction) {
-                // Leaf node (run the menu action)
-                if (submenu.available) {
-                    submenu.perform_action();
-                    remove_menu(0);
-                    submenu.available = false;
-                }
-            }
-            else {
-                // Actual submenu (show the submenu)
-                remove_menu(li.attr('depth'));
-                _this._add_menu(li); 
-            }
-        }
-
-        for (var opt in root.node().options) {
-            menu_item = menu_root.append('li')
-                                 .style('height', '26px')
-                                 .style('line-height', '26px')
-                                 .style('vertical-align', 'middle')
-                                 .style('padding-left', '3px')
-                                 .style('cursor', 'pointer')
-                                 .text(opt)
-                                 .attr('depth', parseInt(root.attr('depth')) + 1)
-
-            if (!(root.node().options[opt] instanceof MenuAction)) {
-                menu_item.append('div')
-                         .style('float', 'right')
-                         .style('height', '26px')
-                         .style('line-height', '26px')
-                         .style('vertical-align', 'middle')
-                         .style('padding', '0px')
-                         .style('width', '12px')
-                         .style('margin', '0px')
-                         .text('>')
-            }
-            menu_item.node().options = root.node().options[opt];
-        }
-
-        menu_root.selectAll('li').on('click', add_submenu);
-
-        root.on('click', function() {
-            var item = d3.select(this);
-            var item_depth = item.attr('depth');
-            remove_menu(item_depth);
-        });
     };
 
    /********************
