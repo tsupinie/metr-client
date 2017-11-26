@@ -27,6 +27,21 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
     };
 
+    this.Menu.prototype.path_to_action = function(act) {
+        for (var item in this.tree) {
+            if (this.tree[item] === act) {
+                return item
+            }
+            else if (this.tree[item] instanceof Menu) {
+                var subpath = this.tree[item].path_to_action(act);
+                if (subpath !== null) {
+                    return item + '/' + subpath
+                }
+            }
+        }
+        return null;
+    };
+
     this.Menu.prototype.show = function(root) {
         var root_rect = root.node().getBoundingClientRect();
         remove_menu(this._depth);
@@ -123,7 +138,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.MenuAction.prototype.perform_action = function() {
-        this._act.bind(this)();
+        this._act.apply(this, arguments);
     };
 
     var METRGUI = function() {
@@ -168,7 +183,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         io.request({'type':'gui', 'static':'wsr88ds'});
 
         this.layer_container = new LayerContainer(this._menu_bar_width);
-        this.layer_container.init();
 
         var gl = this.map.node().getContext('webgl');
 
@@ -177,6 +191,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             atlas.texture = new Image();
             atlas.texture.onload = function(event) {
                 _mod.font_atlas = new FontAtlas(atlas);
+                _this.layer_container.init();
             }
             atlas.texture.src = 'data:image/png;base64,' + texture_data;
         });
@@ -473,8 +488,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_interstate');
                 }),
             }),
-            'Level 2 Radar': new MenuAction(function() {
-                gui.level2_picker(this);
+            'Level 2 Radar': new MenuAction(function(site, field, elev) {
+                if (site === undefined || field === undefined || elev === undefined ) {
+                    gui.level2_picker(this);
+                }
+                else {
+                    gui.create_layer(menu_adder(-1).bind(this), Level2Layer, site, field, elev);
+                }
             }),
             'Observations': new Menu({
                 'METAR': new MenuAction(function() {
@@ -488,12 +508,66 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.LayerContainer.prototype.init = function() {
-        this._popup_menu.tree['Geography'].tree['US States'].perform_action();
-        this._popup_menu.tree['Geography'].tree['US Counties'].perform_action();
+        var layer_str = utils.get_cookie('layers');
+        console.log(layer_str);
+        if (layer_str === undefined) {
+            this._popup_menu.tree['Geography'].tree['US States'].perform_action();
+            this._popup_menu.tree['Geography'].tree['US Counties'].perform_action();
+        }
+        else {
+            var layers = layer_str.split('|');
+            for (ilyr in layers) {
+                // Check for arguments that need to be passed to the menu action
+                if (layers[ilyr].indexOf(':') >= 0) {
+                    var layer_info = layers[ilyr].split(':');
+                    var layer_path = layer_info[0];
+                    var args = layer_info.slice(1);
+                }
+                else {
+                    var layer_path = layers[ilyr];
+                    var args = [];
+                }
+
+                // Check for the active layer
+                if (layer_path.slice(0, 3) == "[A]") {
+                    var active_layer = ilyr;
+                    layer_path = layer_path.slice(3);
+                }
+
+                var path = layer_path.split('/');
+
+                var menu = this._popup_menu;
+                for (ipth in path) {
+                    menu = menu.tree[path[ipth]];
+                }
+
+                menu.perform_action.apply(menu, args);
+                menu.available = false;
+            }
+
+            this.activate_layer(this._draw_order[active_layer]);
+        }
     };
 
     this.LayerContainer.prototype.save_to_cookie = function() {
+        var layer_strs = [];
+        for (var ilyr in this._draw_order) {
+            var str = this._popup_menu.path_to_action(this._draw_order[ilyr].menu_action);
+            if (this._draw_order[ilyr] instanceof Level2Layer) {
+                // TODO: In the future, make this more general
+                site = this._draw_order[ilyr].site;
+                field = this._draw_order[ilyr].field;
+                elev = this._draw_order[ilyr].elev;
 
+                args_str = sprintf(":%s:%s:%.1f", site, field, elev);
+                str += args_str;
+            }
+            if (this._draw_order[ilyr].active) {
+                str = "[A]" + str;
+            }
+            layer_strs.push(str);
+        }
+        utils.set_cookie('layers', layer_strs.join('|'));
     };
 
     this.LayerContainer.prototype.draw_layers = function(zoom_matrix, zoom_fac) {
@@ -545,6 +619,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             this._draw_order.push(lyr);
         }
 
+        this.save_to_cookie();
         this.activate_layer(lyr);
     };
 
@@ -559,6 +634,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             this.activate_layer(this._draw_order[new_idx]);
         }
 
+        this.save_to_cookie();
         gui.refresh_menu();
     };
 
@@ -570,6 +646,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         layer.active = true;
         this._active_layer = layer;
 
+        this.save_to_cookie();
         gui.set_status(layer);
         gui.refresh_menu();
     };
@@ -655,6 +732,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 var swap_lyr = this._draw_order[n_layers - (lyr_index - 1) - 1];
                 this._draw_order.splice(n_layers - (lyr_index - 1) - 1, 1);
                 this._draw_order.splice(n_layers - lyr_index - 1, 0, swap_lyr);
+                this.save_to_cookie();
                 gui.draw();
 
                 lyr_index--;
@@ -668,6 +746,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 var swap_lyr = this._draw_order[n_layers - (lyr_index + 1) - 1];
                 this._draw_order.splice(n_layers - (lyr_index + 1) - 1, 1);
                 this._draw_order.splice(n_layers - (lyr_index) - 1, 0, swap_lyr);
+                this.save_to_cookie();
                 gui.draw();
 
                 lyr_index++;
@@ -881,7 +960,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this.site = site;
         this.field = field;
-        this.elev = elev;
+        this.elev = parseFloat(elev);
 
         var _default_units = {'REF': 'dBZ', 'VEL': 'm/s'};
         this.units = _default_units[this.field];
@@ -897,11 +976,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.register_uniform('vec2', 'u_rdr_pos');
         this._shader.register_index_array();
 
-        var int_deg = Math.floor(elev);
-        var frc_deg = Math.round((elev - int_deg) * 10);
+        var int_deg = Math.floor(this.elev);
+        var frc_deg = Math.round((this.elev - int_deg) * 10);
         var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
         io.register_handler(tag, this.receive_data.bind(this));
-        io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':elev});
+        io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':this.elev});
     };
 
     this.Level2Layer.prototype = Object.create(this.DataLayer.prototype);
