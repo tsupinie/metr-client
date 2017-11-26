@@ -509,7 +509,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.LayerContainer.prototype.init = function() {
         var layer_str = utils.get_cookie('layers');
-        console.log(layer_str);
+
         if (layer_str === undefined) {
             this._popup_menu.tree['Geography'].tree['US States'].perform_action();
             this._popup_menu.tree['Geography'].tree['US Counties'].perform_action();
@@ -1595,9 +1595,23 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var anchs = [];
         var str_wid = 0;
         for (ichr in chars) {
+            var kerning;
+            if (ichr > 0) {
+                var char_combo = chars[ichr - 1] + chars[ichr];
+                if (char_combo in this._atlas['kerning']) {
+                    kerning = this._atlas['kerning'][char_combo];
+                }
+                else {
+                    kerning = 0;
+                }
+            }
+            else {
+                kerning = 0;
+            }
+
             var coords = this.gen_char(chars[ichr], str_hgt * dpr);
             for (icd in coords.vert) {
-                if (!(icd % 2)) { coords.vert[icd] += str_wid; }
+                if (!(icd % 2)) { coords.vert[icd] += str_wid + kerning; }
             }
 
             for (icd in coords.vert) {
