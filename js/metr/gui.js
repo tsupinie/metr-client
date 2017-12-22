@@ -189,7 +189,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
 
         io.register_handler('gui', this.receive_data.bind(this));
-        io.request({'type':'gui', 'static':'wsr88ds'});
+        io.request({'action':'activate', 'type':'gui', 'static':'wsr88ds'});
 
         this.layer_container = new LayerContainer(this._menu_bar_width);
 
@@ -656,6 +656,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._draw_order.splice(lyr_idx, 1);
 
         lyr.menu_action.available = true;
+        lyr.cleanup();
 
         if (lyr.active) {
             var new_idx = Math.max(lyr_idx - 1, 0);
@@ -809,6 +810,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._vp_height = height;
     };
 
+    this.DataLayer.prototype.cleanup = function() {
+        io.request({'action': 'deactivate', 'handler': this._layer_id});
+    };
+
    /********************
     * ShapeLayer code
     ********************/
@@ -862,9 +867,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         this._proj_data = [];
-        var tag = sprintf('shapefile.%s.%s', cls, name);
-        io.register_handler(tag, this.receive_data.bind(this));
-        io.request({'type':'shapefile', 'domain':cls, 'name':name});
+        this._layer_id = sprintf('shapefile.%s.%s', cls, name);
+        io.register_handler(this._layer_id, this.receive_data.bind(this));
+        io.request({'action':'activate', 'type':'shapefile', 'domain':cls, 'name':name});
     };
 
     this.ShapeLayer.prototype = Object.create(this.DataLayer.prototype);
@@ -1006,9 +1011,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         var int_deg = Math.floor(this.elev);
         var frc_deg = Math.round((this.elev - int_deg) * 10);
-        var tag = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
-        io.register_handler(tag, this.receive_data.bind(this));
-        io.request({'type':'level2radar', 'site':site, 'field':field, 'elev':this.elev});
+        this._layer_id = sprintf("level2radar.%s.%s.%02dp%1d", site, field, int_deg, frc_deg);
+        io.register_handler(this._layer_id, this.receive_data.bind(this));
+        io.request({'action':'activate', 'type':'level2radar', 'site':site, 'field':field, 'elev':this.elev});
     };
 
     this.Level2Layer.prototype = Object.create(this.DataLayer.prototype);
@@ -1330,8 +1335,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             'td': {'color': [0.0, 0.8, 0.0], 'align_h':'right', 'align_v':'top'},
         }
 
-        io.register_handler('obs.' + this.source, this.receive_data.bind(this));
-        io.request({'type':'obs', 'source':this.source});
+        this._layer_id = 'obs.' + this.source;
+        io.register_handler(this._layer_id, this.receive_data.bind(this));
+        io.request({'action':'activate', 'type':'obs', 'source':this.source});
     };
 
     this.ObsLayer.prototype = Object.create(this.DataLayer.prototype);
