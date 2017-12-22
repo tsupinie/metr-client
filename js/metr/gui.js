@@ -1059,7 +1059,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         for (var iaz = 0; iaz < tex_size_y; iaz++) {
             for (var irn = 0; irn < tex_size_x; irn++) {
                 var igt = l2_file.n_gates * iaz + irn;
-                var color = this.color_maps[this.field](l2_file.data[igt]);
+                var color = this.color_maps[this.field].cmap(l2_file.data[igt]);
                 refl_img[ipt + 0] = color[0];
                 refl_img[ipt + 1] = color[1];
                 refl_img[ipt + 2] = color[2];
@@ -1107,8 +1107,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             var stat = sprintf("Downloading %s data ...", this.site);
         }
 
-        var color_map = this.color_maps[this.field];
-
         var stat_rect = status_bar.node().getBoundingClientRect()
         status_bar.html('')
                   .append('p')
@@ -1118,34 +1116,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                   .style('float', 'left')
                   .html(stat);
 
-        var cb_elem_width = 35
-
         var color_bar = status_bar.append('div')
                                   .style('float', 'right')
 
-        color_bar.append('ul')
-                 .style('height', stat_rect.height / 2 - 1)
-                 .style('padding-left', cb_elem_width / 2)
-                 .selectAll('li')
-                 .data(color_map.colors)
-                 .enter()
-                 .append('li')
-                 .style('background-color', function(d) { return 'rgba(' + d.join() + ')'; })
-                 .style('display', 'inline-block')
-                 .style('width',  cb_elem_width + 'px')
-                 .style('height', (stat_rect.height / 2 - 1) + 'px')
-                 .html('&nbsp;');
-
-        color_bar.append('ul')
-                 .style('font-size', (stat_rect.height / 2 - 1) + 'px')
-                 .selectAll('li')
-                 .data(color_map.levels.concat([this.units]))
-                 .enter()
-                 .append('li')
-                 .style('display', 'inline-block')
-                 .style('width', cb_elem_width + 'px')
-                 .style('text-align', 'center')
-                 .text(function(d) { return d; });
+        var color_map = this.color_maps[this.field];
+        color_map.create_colorbar(color_bar, this.units);
     }
 
     this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
@@ -1171,43 +1146,96 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         return readable_name;
     };
 
-    this.ColorMap = function(levels, colors) {
-        cmap = function(level) {
-            this.levels = levels;
-            this.colors = colors;
-            var color = [0, 0, 0, 0];
-            for (var ilv = 0; ilv < this.levels.length - 1; ilv++) {
-                if (this.levels[ilv] <= level && level < this.levels[ilv + 1]) {
-                    color = this.colors[ilv];
-                    break
-                }
+    this.ColorMap = function(levels, colors, tick_spacing, tick_fmt) {
+        this.levels = levels;
+        this.colors = colors;
+        this._tick_spacing = tick_spacing;
+        this._tick_fmt = tick_fmt;
+        if (this._tick_fmt === undefined) { this._tick_fmt = "%d"; }
+
+        this.interps = [];
+        for (var ilv = 0; ilv < colors.length - 1; ilv++) {
+            var color1 = "rgba(" + colors[ilv].slice(0, 3).join(',') + ',' + (colors[ilv][3] / 255) + ')'
+            var color2 = "rgba(" + colors[ilv + 1].slice(0, 3).join(',') + ',' + (colors[ilv + 1][3] / 255) + ')'
+            var interp = d3.interpolateLab(color1, color2);
+            this.interps.push(interp);
+        }
+    };
+
+    this.ColorMap.prototype.cmap = function(level) {
+        var color = [0, 0, 0, 0];
+        for (var ilv = 0; ilv < this.levels.length - 1; ilv++) {
+            if (this.levels[ilv] <= level && level < this.levels[ilv + 1]) {
+                var frac = (level - this.levels[ilv]) / (this.levels[ilv + 1] - this.levels[ilv]);
+                d3_color = d3.rgb(this.interps[ilv](frac));
+                color = [d3_color.r, d3_color.g, d3_color.b, 255];
+                break
             }
-            return color;
-        };
+        }
+        return color;
+    };
 
-        cmap.levels = levels;
-        cmap.colors = colors
+    this.ColorMap.prototype.create_colorbar = function(root, units) {
+        var cb_elem_width = 35
+        var stat_rect = root.node().getBoundingClientRect()
 
-        return cmap
+        var colors = [];
+        for (var icl = 0; icl < this.colors.length - 1; icl++) {
+            colors.push({'c1':this.colors[icl], 'c2':this.colors[icl + 1], 'l1':this.levels[icl], 'l2':this.levels[icl + 1]});
+        }
+        var ticks = [];
+        for (var ilv = this.levels[0]; ilv <= this.levels[this.levels.length - 1]; ilv += this._tick_spacing) {
+            ticks.push(sprintf(this._tick_fmt, ilv));
+        }
+
+        var _this = this;
+
+        root.append('ul')
+            .style('height', stat_rect.height / 2 - 1)
+            .style('padding-left', cb_elem_width / 2)
+            .selectAll('li')
+            .data(colors)
+            .enter()
+            .append('li')
+            .style('background', function(d) { return 'linear-gradient(to right, rgba(' + d.c1.join() + '), rgba(' + d.c2.join() + '))'; })
+            .style('display', 'inline-block')
+            .style('width', function(d) { return ((d.l2 - d.l1) / _this._tick_spacing * cb_elem_width) + 'px'; })
+            .style('height', (stat_rect.height / 2 - 1) + 'px')
+            .html('&nbsp;');
+
+        root.append('ul')
+            .style('font-size', (stat_rect.height / 2 - 1) + 'px')
+            .selectAll('li')
+            .data(ticks.concat([units]))
+            .enter()
+            .append('li')
+            .style('display', 'inline-block')
+            .style('width', cb_elem_width + 'px')
+            .style('text-align', 'center')
+            .text(function(d) { return d; });
+
     };
 
     this.Level2Layer.prototype.color_maps = {
-        'REF': this.ColorMap(
-            [5,                  10,                   15,                   20,                   25, 
-             30,                 35,                   40,                   45,                   50, 
-             55,                 60,                   65,                   70,                   75],
-            [[0,   236, 236, 255], [1,   160, 246, 255], [0,   150, 103, 255], [0,   200, 0,   255], [0,   144, 0,   255],
-             [255, 255, 0,   255], [243, 192, 0,   255], [255, 144, 0,   255], [255, 0,   0,   255], [214, 0,   0,   255],
-             [192, 0,   0,   255], [255, 0,   255, 255], [153, 85,  201, 255], [0,   0,   0,   255]]
+        'REF': new this.ColorMap(
+            [-10 ,               5,                    20,
+             35,                 40,                   45,                   50,
+             55,                 60,                   65,                   75,                   80],
+            [[151, 151, 151, 255], [0,   118, 236, 255], [0,   200, 0,   255],
+             [243, 243, 0,   255], [243, 192, 0,   255], [255, 144, 0,   255], [255, 0,   0,   255], [214, 0,   0,   255],
+             [192, 0,   0,   255], [255, 0,   255, 255], [153, 85,  201, 255], [255, 255, 255, 255]],
+            5
         ),
-        'VEL': this.ColorMap(
-            [-35,               -30,                  -25,                  -20,                  -15, 
-             -10,                -5,                    0,                    5,                   10, 
-             15,                 20,                   25,                   30,                   35],
-            [[2,   252, 2,   255], [1,   228, 1,   255], [1,   197, 1,   255], [7,   172, 4,   255], [6,   143, 3,   255],
-             [4,   114, 2,   255], [124, 151, 123, 255], [152, 119, 119, 255], [137, 0,   0,   255], [162, 0,   0,   255],
-             [185, 0,   0,   255], [216, 0,   0,   255], [239, 0,   0,   255], [254, 0,   0,   255]]
+        'VEL': new this.ColorMap(
+            [-70, -35,             -5,                0,                  5,                  35,              70],
+            [[0, 102, 255, 255], [0, 255, 221, 255], [0, 114, 102, 255], [136, 136, 136, 255], [136, 0, 0, 255], [255, 0, 0, 255], [255, 204, 0, 255]],
+            10
         ),
+        'CCR': new this.ColorMap(
+            [0.0, 0.5, 0.7, 0.9, 1.0],
+            [[243, 0,   0,   255], [243, 0,   0,   255], [243, 243, 0,   255], [0,   203, 0,   255], [119, 119, 119, 255]],
+            0.1, "%.1f"
+        )
     };
 
 
