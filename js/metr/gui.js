@@ -67,7 +67,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
                 if (sub_menu_root !== undefined) {
                     if (depth == 0) {
-                        sub_menu_root.on('click', function() { _this.show(d3.select(this)); });
+                        d3.select('body').on('click', function() {});
+                        sub_menu_root.on('click', _this.old_click_handler);
                     }
                     else {
                         sub_menu_root.on('click', add_submenu);
@@ -83,10 +84,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             if (this.menu instanceof MenuAction) {
                 // Leaf node (run the menu action)
                 if (this.menu.available) {
+                    this.menu.available = false;
                     this.menu.perform_action();
                     remove_menu(0);
-                    this.menu.available = false;
                 }
+                d3.event.stopPropagation();
             }
             else {
                 // Actual submenu (show the submenu)
@@ -124,10 +126,17 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         menu_root.selectAll('li').on('click', add_submenu);
+        if (this._depth == 0) {
+            d3.select('body').on('click', function() {
+                remove_menu(0);
+            });
+        }
 
+        this.old_click_handler = root.on('click');
         root.on('click', function() {
             remove_menu(_this._depth);
-        });       
+        });
+        d3.event.stopPropagation();
     };
 
     this.MenuAction = function(action, def_avail) {
@@ -390,19 +399,33 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.map_picker = new MapPicker(this.map_geo, data, function(root) {
             var _popup = new Menu({
                 'Reflectivity': new MenuAction(function () {
-                    _this.map_picker.clear();
+                    menu_action.available = false;
+                    _this.remove_map_picker();
                     gui.create_layer(menu_adder(-1), Level2Layer, root.text(), 'REF', 0.5);
                 }),
                 'Velocity': new MenuAction(function () {
-                    _this.map_picker.clear();
+                    menu_action.available = false;
+                    _this.remove_map_picker();
                     gui.create_layer(menu_adder(-1), Level2Layer, root.text(), 'VEL', 0.5);
                 }),
-            }, '100px')
+                'Correlation Coefficient': new MenuAction(function () {
+                    menu_action.available = false;
+                    _this.remove_map_picker();
+                    gui.create_layer(menu_adder(-1), Level2Layer, root.text(), 'CCR', 0.5);
+                }),
+            }, '150px')
             _popup.show(root)
         });
 
         this.draw();
     };
+
+    METRGUI.prototype.remove_map_picker = function() {
+        if (this.map_picker !== undefined) {
+            this.map_picker.clear();
+            this.map_picker = undefined;
+        }
+    }
 
     this.MapPicker = function(map_proj, data, callback) {
         this.map_proj = map_proj;
@@ -480,16 +503,17 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             'Geography': new Menu({
                 'US States': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_st');
-                }, false),
+                }),
                 'US Counties': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_cty');
-                }, false),
+                }),
                 'US Interstate Highways': new MenuAction(function() {
                     gui.create_layer(menu_adder(0).bind(this), ShapeLayer, 'geo', 'us_interstate');
                 }),
             }),
             'Level 2 Radar': new MenuAction(function(site, field, elev) {
                 if (site === undefined || field === undefined || elev === undefined ) {
+                    this.available = true;
                     gui.level2_picker(this);
                 }
                 else {
@@ -582,7 +606,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var ul = menu.append('ul');
         for (var ilyr = this._draw_order.length - 1; ilyr > -1; ilyr--) {
             var lyr_html = this._draw_order[ilyr].layer_menu_html();
-            var lyr_mkr = ul.append('li').on('click', function() { _this.activate_layer(_this._layer_from_marker(this)); });
+            var lyr_mkr = ul.append('li').on('click', function() {
+                if (d3.event.target.className != 'remove') {
+                    _this.activate_layer(_this._layer_from_marker(this)); 
+                }
+            });
             lyr_mkr.append('div').attr('class', 'drag').text("\u22ee");
             lyr_mkr.append('p').html(lyr_html);
             lyr_mkr.append('div')
@@ -591,7 +619,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                    .on('click', function() {
                        _this.remove_layer(_this._layer_from_marker(this.parentNode));
                        gui.draw();
-                       d3.event.stopPropagation();
                    });
 
             if (this._draw_order[ilyr].active) {
@@ -606,8 +633,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         ul.selectAll('li').call(d3.drag().on('start', function() { _this._drag_layers(this); }));
 
         ul.append('li').html('+').attr('class', 'addnew').on('click', function() {
-            var root = d3.select(this).attr('depth', 0)
-            _this._popup_menu.show(root); 
+            var root = d3.select(this).attr('depth', 0);
+            gui.remove_map_picker();
+            _this._popup_menu.show(root);
         });
     };
 
