@@ -818,6 +818,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     * ShapeLayer code
     ********************/
     this.ShapeLayer = function(gl, map_proj, cls, name) {
+/*
         var _vert_shader_src = `
             attribute vec2 a_pos;
             uniform vec2 u_delta;
@@ -827,6 +828,21 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 vec2 proj_pos = lcc(a_pos);
                 vec2 zoom_pos = (vec3(proj_pos + u_delta, 1.0) * u_zoom).xy;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
+            }
+        `;
+*/
+
+        var _vert_shader_src = `
+            attribute vec2 a_pos;
+            attribute vec2 a_normal;
+            attribute float a_miter;
+            uniform float u_thickness;
+            uniform mat3 u_zoom;
+
+            void main() {
+                vec2 proj_pos = lcc(a_pos);
+                vec2 zoom_pos = (vec3(proj_pos + a_normal * u_miter * u_thickness / 2.0, 1.0) * u_zoom).xy;
+                gl_position = vec4(zoom_pos * 2.0, 0.0, 1.0);
             }
         `;
 
