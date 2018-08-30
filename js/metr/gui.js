@@ -818,71 +818,25 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     * ShapeLayer code
     ********************/
     this.ShapeLayer = function(gl, map_proj, cls, name) {
-/*
-        var _vert_shader_src = `
-            attribute vec2 a_pos;
-            uniform vec2 u_delta;
-            uniform mat3 u_zoom;
-
-            void main() {
-                vec2 proj_pos = lcc(a_pos);
-                vec2 zoom_pos = (vec3(proj_pos + u_delta, 1.0) * u_zoom).xy;
-                gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
-            }
-        `;
-*/
-
-        var _vert_shader_src = `
-            attribute vec2 a_pos;
-            attribute vec2 a_normal;
-            attribute float a_miter;
-            uniform float u_thickness;
-            uniform mat3 u_zoom;
-
-            void main() {
-                vec2 proj_pos = lcc(a_pos);
-                vec2 zoom_pos = (vec3(proj_pos + a_normal * u_miter * u_thickness / 2.0, 1.0) * u_zoom).xy;
-                gl_position = vec4(zoom_pos * 2.0, 0.0, 1.0);
-            }
-        `;
-
-        var _frag_shader_src = `
-            precision mediump float;
-            uniform vec3 u_color;
-
-            void main() {
-                gl_FragColor = vec4(u_color, 1.0);
-            }
-        `;
-
         this._gl = gl;
+        this._map_proj = map_proj;
         this.cls = cls;
         this.name = name;
 
-        this._shader = new WGLShader(gl, 'shape', _vert_shader_src, _frag_shader_src);
-        this._shader.register_plugin(map_proj);
-        this._shader.register_plugin(new geo.geodesic());
-        this._shader.compile_program();
-
-        this._shader.register_attribute('a_pos');
-        this._shader.register_uniform('mat3', 'u_zoom');
-        this._shader.register_uniform('vec2', 'u_delta');
-        this._shader.register_uniform('vec3', 'u_color');
-
         if (name == 'us_st') {
-            this.set_linewidth(2);
+            this._thickness = 4.5;
             this._color = [0, 0, 0];
         }
         else if ( name == 'us_interstate') {
-            this.set_linewidth(2);
+            this._thickness = 4.5;
             this._color = [0, 0, 0.4];
         }
         else {
-            this.set_linewidth(1);
+            this._thickness = 1.5;
             this._color = [0, 0, 0];
         }
 
-        this._proj_data = [];
+        this._polyline = null;
         this._layer_id = sprintf('shapefile.%s.%s', cls, name);
         io.register_handler(this._layer_id, this.receive_data.bind(this));
         io.request({'action':'activate', 'type':'shapefile', 'domain':cls, 'name':name});
@@ -897,20 +851,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return;
         }
 
-        this._proj_data = [];
-        var ipp = 0;
+        var pts = []
         for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
             if (isNaN(shp_file.data[ipt])) {
-                this._proj_data[ipp] = NaN;
-                this._proj_data[ipp + 1] = NaN;
+                pts.push([NaN, NaN]);
             }
             else {
-                this._proj_data[ipp] = shp_file.data[ipt];
-                this._proj_data[ipp + 1] = shp_file.data[ipt + 1];
+                pts.push([shp_file.data[ipt], shp_file.data[ipt + 1]]);
                 ipt++;
             }
-            ipp += 2;
         }
+
+        this._polyline = new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
         gui.draw();
     };
 
@@ -928,23 +880,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     }
 
     this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
-        if (this._proj_data == []) {
+        if (this._polyline === null) {
             return;
         }
 
-        var gl = this._gl;
-
-        this._shader.enable_program();
-        this._shader.bind_attribute('a_pos', this._proj_data);
-        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
-        this._shader.bind_uniform('u_color', this._color);
-
-        for (ivec in this._delta_vectors) {
-            vec = this._delta_vectors[ivec];
-            this._shader.bind_uniform('u_delta', [vec[0] / zoom_fac, vec[1] / zoom_fac]);
-
-            gl.drawArrays(gl.LINE_STRIP, 0, this._proj_data.length / 2);
-        }
+        this._polyline.draw(zoom_matrix, zoom_fac);
     };
 
     this.ShapeLayer.prototype.layer_menu_html = function() {
@@ -953,22 +893,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         return readable_name;
     };
 
-    this.ShapeLayer.prototype.set_linewidth = function(linewidth) {
-        this.linewidth = linewidth;
-        this._delta_vectors = this._compute_delta_vectors(this.linewidth);
-    };
-
-    this.ShapeLayer.prototype._compute_delta_vectors = function(linewidth) {
-        /* This will not be general. In the future, will probably have to actually do poly-lines. */
-        var vecs;
-        if (linewidth == 1) {
-            vecs = [[0, 0]];
-        }
-        else if (linewidth == 2) {
-            vecs = [[0.5, 0.5], [0.5, -0.5], [-0.5, -0.5], [0.5, -0.5]];
-        }
-        return vecs
-    };
 
    /********************
     * Level2Layer code
@@ -1736,6 +1660,121 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.FontAtlas.prototype.get_texture = function() {
         return this._atlas.texture;
+    }
+
+   /********************
+    * PolyLine code
+    ********************/
+    this.PolyLine = function(gl, map_proj, viewport, pts, color, thickness) {
+        var pts_next = pts.slice(1);
+        pts_next.push(pts[pts.length - 1]);
+        var pts_prev = pts.slice(0, pts.length - 1);
+        pts_prev.unshift(pts[0]);
+
+        for (var ipt = 0; ipt < pts.length; ipt++) {
+            if (isNaN(pts_next[ipt][0]) || isNaN(pts_next[ipt][1])) {
+                pts_next[ipt] = pts[ipt];
+            }
+            if (isNaN(pts_prev[ipt][0]) || isNaN(pts_prev[ipt][1])) {
+                pts_prev[ipt] = pts[ipt];
+            }
+            if (isNaN(pts[ipt][0]) || isNaN(pts[ipt][1])) {
+                pts_prev[ipt] = [NaN, NaN];
+                pts_next[ipt] = [NaN, NaN];
+            }
+        }
+
+        this._pts = []
+        this._pts_next = [];
+        this._pts_prev = [];
+        for (var ipt = 0; ipt < pts.length; ipt++) {
+            if (isNaN(pts[ipt][0]) || isNaN(pts[ipt][1])) {
+                this._pts.push(pts[ipt - 1][0], pts[ipt - 1][1], pts[ipt + 1][0], pts[ipt + 1][1]);
+                this._pts_next.push(pts_prev[ipt - 1][0], pts_prev[ipt - 1][1], pts_next[ipt + 1][0], pts_next[ipt + 1][1]);
+                this._pts_prev.push(pts_next[ipt - 1][0], pts_next[ipt - 1][1], pts_prev[ipt + 1][0], pts_prev[ipt + 1][1]);
+            }
+            else {
+                this._pts.push(pts[ipt][0], pts[ipt][1], pts[ipt][0], pts[ipt][1]);
+                this._pts_next.push(pts_next[ipt][0], pts_next[ipt][1], pts_prev[ipt][0], pts_prev[ipt][1]);
+                this._pts_prev.push(pts_prev[ipt][0], pts_prev[ipt][1], pts_next[ipt][0], pts_next[ipt][1]);
+            }
+        }
+
+        this._color = color;
+        this._thick = thickness;
+
+        var _vert_shader_src = `
+            precision mediump float;
+            attribute vec2 a_pos;
+            attribute vec2 a_prev;
+            attribute vec2 a_next;
+            uniform float u_thickness;
+            uniform mat3 u_zoom;
+            uniform vec2 u_viewport;
+
+            void main() {
+                vec2 proj_prev = (vec3(lcc(a_prev), 1.0) * u_zoom).xy;
+                vec2 proj_pos = (vec3(lcc(a_pos), 1.0) * u_zoom).xy;
+                vec2 proj_next = (vec3(lcc(a_next), 1.0) * u_zoom).xy;
+
+                vec2 dir = vec2(0.0, 0.0);
+                if (proj_prev == proj_pos) {
+                    dir = normalize(proj_next - proj_pos);
+                }
+                else if (proj_next == proj_pos) {
+                    dir = normalize(proj_pos - proj_prev);
+                }
+                else {
+                    dir = normalize(proj_next - proj_prev);
+                }
+
+                float len = u_thickness;
+
+                vec2 normal = vec2(-dir.y, dir.x) / u_viewport;
+                vec2 zoom_pos = proj_pos + normal * len / 2.0;
+                gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
+            }
+        `;
+
+        var _frag_shader_src = `
+            precision mediump float;
+            uniform vec3 u_color;
+
+            void main() {
+                gl_FragColor = vec4(u_color, 1.0);
+            }
+        `;
+
+        this._gl = gl;
+        this._viewport = viewport;
+
+        this._shader = new WGLShader(gl, 'polyline', _vert_shader_src, _frag_shader_src);
+        this._shader.register_plugin(map_proj);
+        this._shader.register_plugin(new geo.geodesic());
+        this._shader.compile_program();
+
+        this._shader.register_attribute('a_prev');
+        this._shader.register_attribute('a_pos');
+        this._shader.register_attribute('a_next');
+        this._shader.register_uniform('mat3', 'u_zoom');
+        this._shader.register_uniform('vec2', 'u_delta');
+        this._shader.register_uniform('float', 'u_thickness');
+        this._shader.register_uniform('vec2', 'u_viewport');
+        this._shader.register_uniform('vec3', 'u_color');
+    }
+
+    this.PolyLine.prototype.draw = function(zoom_matrix, zoom_fac) {
+        this._shader.enable_program();
+        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_color', this._color);
+        this._shader.bind_uniform('u_thickness', this._thick);
+        this._shader.bind_uniform('u_viewport', this._viewport);
+
+        this._shader.bind_attribute('a_prev', this._pts_prev);
+        this._shader.bind_attribute('a_pos', this._pts);
+        this._shader.bind_attribute('a_next', this._pts_next);
+
+        this._gl.drawArrays(this._gl.TRIANGLE_STRIP, 0, this._pts.length / 2);
     }
 
    /********************
