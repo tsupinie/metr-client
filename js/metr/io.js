@@ -1,6 +1,7 @@
 
 define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base64, pako) {
     var sprintf = sprintf.sprintf;
+    var _mod = this;
 
     var io = function() {
         var _this = this;
@@ -24,15 +25,38 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
             };
 
             _this._ws.onmessage = function(event) {
-                var msg_json = JSON.parse(event.data);
-                if (msg_json.data !== undefined) {
-                    // Would be missing in the event of an error
-                    msg_json.data = _this.decompress(msg_json.data);
+                function handler(msg_json) {
+                    var handler = msg_json.handler;
+                    var dt = d3.timeFormat("%d %b %Y %H:%M:%S")(new Date());
+                    console.log(dt + ': Receiving data for ' + handler);
+                    _this.data_handlers[handler](msg_json);
                 }
-                var handler = msg_json.handler;
-                var dt = d3.timeFormat("%d %b %Y %H:%M:%S")(new Date());
-                console.log(dt + ': Receiving data for ' + handler);
-                _this.data_handlers[handler](msg_json);
+
+                try {
+                    // Try assuming the old format first
+                    var msg_json = JSON.parse(event.data);
+                    if (msg_json.data !== undefined) {
+                        // Would be missing in the event of an error
+                        msg_json.data = _this.decompress(msg_json.data);
+                    }
+                    handler(msg_json);
+                }
+                catch (exc) {
+                    // If the JSON parsing fails, it must be the new format, which is compressed JSON
+                    var file_reader = new FileReader();
+                    file_reader.onload = function(event) {
+                        var infl_ba = pako.inflate(event.target.result);
+                        var msg_text = _this.ba_to_str(infl_ba);
+                        var msg_json = JSON.parse(msg_text);
+                        for (var ient = 0; ient < msg_json.entities.length; ient++) {
+                            if (msg_json.entities[ient].shape !== undefined) {
+                                msg_json.entities[ient].shape = new _mod.GeoJSON(msg_json.entities[ient].shape);
+                            }
+                        }
+                        handler(msg_json);
+                    };
+                    file_reader.readAsArrayBuffer(event.data);
+                }
             };
         };
 
@@ -55,7 +79,45 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
             return decomp_data
         };
 
+        this.ba_to_str = function (arr) {
+            var strings = [];
+            var chunksize = 0xffff;
+
+            // There is a maximum stack size. We cannot call String.fromCharCode with as many arguments as we want
+            for (var i=0; i*chunksize < arr.length; i++){
+                strings.push(String.fromCharCode.apply(null, arr.subarray(i*chunksize, (i+1)*chunksize)));
+            }
+            return strings.join('');
+        };
+
         _this.init_io();
     };
+
+    this.GeoJSON = function(entity) {
+        this.coords = [];
+        if (entity.type == "MultiLineString") {
+            for (var iln = 0; iln < entity.coordinates.length; iln++) {
+                var line = this._unpack_line(entity.coordinates[iln]);
+                this.coords.push(line);
+            }
+        }
+        else if (entity.type == "LineString") {
+            var line = this._unpack_line(entity.coordinates);
+            this.coords.push(line);
+        }
+    };
+
+    this.GeoJSON.prototype._unpack_line = function(line_str) {
+        raw_ba = base64.toByteArray(line_str);
+        line_array = new Float32Array(raw_ba.buffer);
+
+        var line = [];
+        for (icd = 0; icd < line_array.length; icd += 2) {
+            line.push([line_array[icd], line_array[icd + 1]]);
+        }
+
+        return line;
+    };
+
     return new io()
 });

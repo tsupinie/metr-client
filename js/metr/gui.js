@@ -852,15 +852,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         var pts = []
-        for (var ipt = 0; ipt < shp_file.data.length; ipt++) {
-            if (isNaN(shp_file.data[ipt])) {
+        for (var ient = 0; ient < shp_file.entities.length; ient++) {
+            shape = shp_file.entities[ient].shape;
+            for (var iln = 0; iln < shape.coords.length; iln++) {
+                line = shape.coords[iln];
+                for (var ipt = 0; ipt < line.length; ipt++) {
+                    pts.push(line[ipt]);
+                }
                 pts.push([NaN, NaN]);
             }
-            else {
-                pts.push([shp_file.data[ipt], shp_file.data[ipt + 1]]);
-                ipt++;
-            }
         }
+
+        pts.pop();
 
         this._polyline = new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
         gui.draw();
