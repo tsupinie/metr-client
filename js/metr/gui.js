@@ -529,6 +529,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 }),
             }),
         }, '165px');
+
+        this._anim_intv = 500; // interval of 0.5 seconds for now
+        this._timer_id = window.setInterval(this.update_time.bind(this), this._anim_intv);
     };
 
     this.LayerContainer.prototype.init = function() {
@@ -686,6 +689,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
     };
 
+    this.LayerContainer.prototype.update_time = function() {
+        js_dt = new Date();
+        for (var ilyr in this._draw_order) {
+            this._draw_order[ilyr].set_time(js_dt);
+        }
+    };
+
     this.LayerContainer.prototype._index_of_layer = function(lyr) {
         var lyr_index = this._draw_order.indexOf(lyr);
         if (lyr_index == -1) {
@@ -791,6 +801,153 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
    /********************
+    * TimeFrame code
+    ********************/
+    this.TimeFrame = function(reframe_callback) {
+        this._callback = reframe_callback;
+        this._entities = [];
+        this._intv_table = [];
+        this._ent_table = [];
+
+        var Interval = function(start, end) {
+            this.start = start;
+            this.end = end;
+        };
+
+        Interval.prototype.is_empty = function() {
+            return this.start == this.end;
+        };
+
+        Interval.prototype.equals = function(other) {
+            return this.start == other.start && this.end == other.end;
+        };
+
+        Interval.prototype.contains = function(other) {
+            return other.start >= this.start && other.end <= this.end;
+        };
+
+        Interval.prototype.contains_time = function(js_dt) {
+            return this.start <= js_dt && js_dt <= this.end;
+        };
+
+        Interval.prototype.intersects = function(other) {
+            return !this.intersection(other).is_empty();
+        };
+
+        Interval.prototype.intersection = function(other) {
+            start = new Date(Math.max(this.start, other.start));
+            end = new Date(Math.min(this.end, other.end));
+
+            if (end < start) { 
+                end = start;
+            }
+
+            return new Interval(start, end);
+        };
+
+        Interval.prototype.sub_intervals = function(other) {
+            var subintv = []
+            if (this.contains(other)) {
+                subintv.push(new Interval(this.start, other.start), other, new Interval(other.end, this.end));
+            }
+            else if (other.contains(this)) {
+                subintv.push(new Interval(other.start, this.start), this, new Interval(this.end, other.end));
+            }
+            else if (this.intersects(other)) {
+                bounds = [this.start, this.end, other.start, other.end];
+                bounds.sort(function(a, b) { return b - a; });
+                subintv.push(new Interval(bounds[0], bounds[1]), new Interval(bounds[1], bounds[2]), new Interval(bounds[2], bounds[3]));
+            }
+            else {
+                subintv.push(this, other)
+            }
+
+            return subintv.filter(function(intv) { return !intv.is_empty(); });
+        };
+
+        this.Interval = Interval;
+    };
+
+    this.TimeFrame.prototype.add_entities = function(entities) {
+        this._entities = this._entities.concat(entities);
+        this._build_table();
+    };
+
+    this.TimeFrame.prototype.remove_entities = function(entities) {
+        this._entities = this._entities.filter(function(elem) { return entities.includes(elem); });
+        this._build_table();
+    };
+
+    this.TimeFrame.prototype.query = function(js_dt) {
+        for (var iintv in this._intv_table) {
+            if (this._intv_table[iintv].contains_time(js_dt)) {
+                return this._ent_table[iintv];
+            }
+        }
+        return null;
+    };
+
+    this.TimeFrame.prototype._build_table = function() {
+        this._intv_table = [];
+        this._ent_table = [];
+
+        for (var ient in this._entities) {
+            var entity = this._entities[ient];
+            var entity_intv = new this.Interval(entity.valid, entity.expires);
+
+            if (this._intv_table.length == 0) {
+                // If this is the first entity, just push it onto the table
+                this._intv_table.push(entity_intv);
+                this._ent_table.push([entity]);
+            }
+            else {
+                // If this is the second entity, figure out if its interval overlaps with anything already in the table
+                var intersections = {};
+                for (var iintv in this._intv_table) {
+                    var intv = this._intv_table[iintv];
+                    if (entity_intv.intersects(intv)) {
+                        subintv = entity_intv.subintervals(intv);
+                        intersections[iintv] = subintv;
+                    }
+                }
+
+                if (intersections.length == 0) {
+                    // If there isn't an overlap, just push it onto the table
+                    this._intv_table.push(entity_intv);
+                    this._ent_table.push([entity]);
+                }
+                else {
+                    // If there is an overlap, remove the old interval(s) and construct new ones with new lists
+                    var idxs = intersections.keys();
+                    idxs.sort(); idxs.reverse();
+                    for (var iidx in indxs) {
+                        var idx = idxs[iidx];
+                        var subintv = intersections[idx];
+
+                        this._intv_table.splice(idx, 1);
+                        var entity_list = this._ent_table.splice(idx, 1)[0];
+
+                        for (isintv in subintv) {
+                            var sintv = subintv[isintv];
+                            var new_entity_list = entity_list.slice();
+                            if (entity_intv.contains(sintv)) {
+                                new_entity_list.push(entity);
+                            }
+
+                            this._intv_table.push(sintv);
+                            this._ent_table.push(new_entity_list);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (ient in this._ent_table) {
+            this._ent_table[ient] = this._callback(this._ent_table[ient]);
+        }
+    };
+
+   /********************
     * DataLayer code
     ********************/
     this.DataLayer = function(gl) {
@@ -812,6 +969,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.DataLayer.prototype.cleanup = function() {
         io.request({'action': 'deactivate', 'handler': this._layer_id});
+    };
+
+    this.DataLayer.prototype.set_time = function(js_dt) {
+        this._dt = js_dt;
     };
 
    /********************
@@ -836,7 +997,23 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             this._color = [0, 0, 0];
         }
 
-        this._polyline = null;
+        function create_polyline(entity_list) {
+            var pts = []
+            for (var ient = 0; ient < entity_list.length; ient++) {
+                var shape = entity_list[ient].shape;
+                for (var ipt = 0; ipt < shape.coordinates.length; ipt++) {
+                    pts.push(shape.coordinates[ipt]);
+                }
+                pts.push(NaN, NaN);
+            }
+
+            pts.pop(); pts.pop();
+
+            return new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
+        }
+
+        this._frames = new _mod.TimeFrame(create_polyline.bind(this));
+
         this._layer_id = sprintf('shapefile.%s.%s', cls, name);
         io.register_handler(this._layer_id, this.receive_data.bind(this));
         io.request({'action':'activate', 'type':'shapefile', 'domain':cls, 'name':name});
@@ -851,21 +1028,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return;
         }
 
-        var pts = []
-        for (var ient = 0; ient < shp_file.entities.length; ient++) {
-            shape = shp_file.entities[ient].shape;
-            for (var iln = 0; iln < shape.coords.length; iln++) {
-                line = shape.coords[iln];
-                for (var ipt = 0; ipt < line.length; ipt++) {
-                    pts.push(line[ipt]);
-                }
-                pts.push([NaN, NaN]);
-            }
-        }
+        this._frames.add_entities(shp_file.entities);
 
-        pts.pop();
-
-        this._polyline = new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
         gui.draw();
     };
 
@@ -883,11 +1047,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     }
 
     this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
-        if (this._polyline === null) {
-            return;
-        }
+        polyline = this._frames.query(this._dt);
 
-        this._polyline.draw(zoom_matrix, zoom_fac);
+        if (polyline !== null) {
+            polyline.draw(zoom_matrix, zoom_fac);
+        }
     };
 
     this.ShapeLayer.prototype.layer_menu_html = function() {
@@ -1669,37 +1833,41 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     * PolyLine code
     ********************/
     this.PolyLine = function(gl, map_proj, viewport, pts, color, thickness) {
-        var pts_next = pts.slice(1);
-        pts_next.push(pts[pts.length - 1]);
-        var pts_prev = pts.slice(0, pts.length - 1);
-        pts_prev.unshift(pts[0]);
+        var pts_next = pts.slice(2);
+        pts_next.push(pts[pts.length - 2], pts[pts.length - 1]);
+        var pts_prev = pts.slice(0, pts.length - 2);
+        pts_prev.unshift(pts[0], pts[1]);
 
-        for (var ipt = 0; ipt < pts.length; ipt++) {
-            if (isNaN(pts_next[ipt][0]) || isNaN(pts_next[ipt][1])) {
+        for (var ipt = 0; ipt < pts.length; ipt += 2) {
+            if (isNaN(pts_next[ipt]) || isNaN(pts_next[ipt + 1])) {
                 pts_next[ipt] = pts[ipt];
+                pts_next[ipt + 1] = pts[ipt + 1];
             }
-            if (isNaN(pts_prev[ipt][0]) || isNaN(pts_prev[ipt][1])) {
+            if (isNaN(pts_prev[ipt]) || isNaN(pts_prev[ipt + 1])) {
                 pts_prev[ipt] = pts[ipt];
+                pts_prev[ipt + 1] = pts[ipt + 1];
             }
-            if (isNaN(pts[ipt][0]) || isNaN(pts[ipt][1])) {
-                pts_prev[ipt] = [NaN, NaN];
-                pts_next[ipt] = [NaN, NaN];
+            if (isNaN(pts[ipt]) || isNaN(pts[ipt + 1])) {
+                pts_prev[ipt] = NaN;
+                pts_prev[ipt + 1] = NaN;
+                pts_next[ipt] = NaN;
+                pts_next[ipt + 1] = NaN;
             }
         }
 
         this._pts = []
         this._pts_next = [];
         this._pts_prev = [];
-        for (var ipt = 0; ipt < pts.length; ipt++) {
-            if (isNaN(pts[ipt][0]) || isNaN(pts[ipt][1])) {
-                this._pts.push(pts[ipt - 1][0], pts[ipt - 1][1], pts[ipt + 1][0], pts[ipt + 1][1]);
-                this._pts_next.push(pts_prev[ipt - 1][0], pts_prev[ipt - 1][1], pts_next[ipt + 1][0], pts_next[ipt + 1][1]);
-                this._pts_prev.push(pts_next[ipt - 1][0], pts_next[ipt - 1][1], pts_prev[ipt + 1][0], pts_prev[ipt + 1][1]);
+        for (var ipt = 0; ipt < pts.length; ipt += 2) {
+            if (isNaN(pts[ipt]) || isNaN(pts[ipt + 1])) {
+                this._pts.push(pts[ipt - 2], pts[ipt - 1], pts[ipt + 2], pts[ipt + 3]);
+                this._pts_next.push(pts_prev[ipt - 2], pts_prev[ipt - 1], pts_next[ipt + 2], pts_next[ipt + 3]);
+                this._pts_prev.push(pts_next[ipt - 2], pts_next[ipt - 1], pts_prev[ipt + 2], pts_prev[ipt + 3]);
             }
             else {
-                this._pts.push(pts[ipt][0], pts[ipt][1], pts[ipt][0], pts[ipt][1]);
-                this._pts_next.push(pts_next[ipt][0], pts_next[ipt][1], pts_prev[ipt][0], pts_prev[ipt][1]);
-                this._pts_prev.push(pts_prev[ipt][0], pts_prev[ipt][1], pts_next[ipt][0], pts_next[ipt][1]);
+                this._pts.push(pts[ipt], pts[ipt + 1], pts[ipt], pts[ipt + 1]);
+                this._pts_next.push(pts_next[ipt], pts_next[ipt + 1], pts_prev[ipt], pts_prev[ipt + 1]);
+                this._pts_prev.push(pts_prev[ipt], pts_prev[ipt + 1], pts_next[ipt], pts_next[ipt + 1]);
             }
         }
 

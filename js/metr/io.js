@@ -45,12 +45,29 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
                     // If the JSON parsing fails, it must be the new format, which is compressed JSON
                     var file_reader = new FileReader();
                     file_reader.onload = function(event) {
+                        var parser = d3.utcParse("%Y-%m-%d %H:%M:%S UTC");
+
                         var infl_ba = pako.inflate(event.target.result);
                         var msg_text = _this.ba_to_str(infl_ba);
                         var msg_json = JSON.parse(msg_text);
                         for (var ient = 0; ient < msg_json.entities.length; ient++) {
+                            msg_json.entities[ient].valid = parser(msg_json.entities[ient].valid);
+                            msg_json.entities[ient].expires = parser(msg_json.entities[ient].expires);
+
                             if (msg_json.entities[ient].shape !== undefined) {
-                                msg_json.entities[ient].shape = new _mod.GeoJSON(msg_json.entities[ient].shape);
+                                var raw_ba = base64.toByteArray(msg_json.entities[ient].shape.coordinates);
+                                var line_array = new Float32Array(raw_ba.buffer);
+
+                                var line = [];
+                                for (var icd = 0; icd < line_array.length; icd++) {
+                                    if (isNaN(line_array[icd])) {
+                                        line.push(NaN, NaN);
+                                    }
+                                    else {
+                                        line.push(line_array[icd]);
+                                    }
+                                }
+                                msg_json.entities[ient].shape.coordinates = line;
                             }
                         }
                         handler(msg_json);
@@ -73,9 +90,9 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
         };
 
         this.decompress = function(data) {
-            compr_ba = base64.toByteArray(data);
-            infl_ba = pako.inflate(compr_ba);
-            decomp_data = new Float32Array(infl_ba.buffer);
+            var compr_ba = base64.toByteArray(data);
+            var infl_ba = pako.inflate(compr_ba);
+            var decomp_data = new Float32Array(infl_ba.buffer);
             return decomp_data
         };
 
@@ -91,32 +108,6 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
         };
 
         _this.init_io();
-    };
-
-    this.GeoJSON = function(entity) {
-        this.coords = [];
-        if (entity.type == "MultiLineString") {
-            for (var iln = 0; iln < entity.coordinates.length; iln++) {
-                var line = this._unpack_line(entity.coordinates[iln]);
-                this.coords.push(line);
-            }
-        }
-        else if (entity.type == "LineString") {
-            var line = this._unpack_line(entity.coordinates);
-            this.coords.push(line);
-        }
-    };
-
-    this.GeoJSON.prototype._unpack_line = function(line_str) {
-        raw_ba = base64.toByteArray(line_str);
-        line_array = new Float32Array(raw_ba.buffer);
-
-        var line = [];
-        for (icd = 0; icd < line_array.length; icd += 2) {
-            line.push([line_array[icd], line_array[icd + 1]]);
-        }
-
-        return line;
     };
 
     return new io()
