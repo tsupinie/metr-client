@@ -188,6 +188,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this.map_geo = new geo.lcc(std_lon, std_lat, parallels[0], parallels[1]);
 
+        this.max_age = 3600;
+
         io.register_handler('gui', this.receive_data.bind(this));
         io.request({'action':'activate', 'type':'gui', 'static':'wsr88ds'});
 
@@ -291,7 +293,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     METRGUI.prototype.create_layer = function(callback, LayerType) {
         var args = Array.prototype.slice.call(arguments, 2);
         var gl = this.map.node().getContext('webgl');
-        args.splice(0, 0, gl, this.map_geo);
+        args.splice(0, 0, gl, this.map_geo, this.max_age);
 
         var lyr = Object.create(LayerType.prototype);
         LayerType.apply(lyr, args);
@@ -803,8 +805,55 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
    /********************
     * TimeFrame code
     ********************/
-    this.TimeFrame = function(reframe_callback) {
+    this.SingleEntityFrameSet = function(callback, max_age) {
+        this._callback = callback;
+        this._max_age = max_age * 1000;
+        this._entities = [];
+    };
+
+    this.SingleEntityFrameSet.prototype.add_entity = function(entity) {
+        var entity_output = {'valid':entity.valid, 'expires':entity.expires}
+        entity_output['resp'] = this._callback(entity);
+
+        this._entities.push(entity_output);
+        this._prune_table();
+    };
+
+    this.SingleEntityFrameSet.prototype.query = function(js_dt) {
+        var valid_entities = [];
+        for (var ient in this._entities) {
+            var entity = this._entities[ient];
+            if (entity.valid <= js_dt && js_dt < entity.expires) {
+                valid_entities.push(entity);
+            }
+        }
+
+        var most_recent = null;
+        for (var ient in valid_entities) {
+            if (most_recent === null || valid_entities[ient].valid > most_recent.valid) {
+                most_recent = valid_entities[ient];
+            }
+        }
+
+        if (most_recent !== null) {
+            most_recent = most_recent['resp'];
+        }
+
+        return most_recent;
+    };
+
+    this.SingleEntityFrameSet.prototype._prune_table = function() {
+        var kick_out_time = new Date() - this._max_age;
+        for (var ient = this._entities.length - 1; ient >= 0; ient--) {
+            if (this._entities.expires < kick_out_time) {
+                this._entities = this._entities.splice(ient, 1);
+            }
+        }
+    };
+
+    this.MultiEntityFrameSet = function(reframe_callback, max_age) {
         this._callback = reframe_callback;
+        this._max_age = max_age * 1000; // store max_age in milliseconds
         this._entities = [];
         this._intv_table = [];
         this._ent_table = [];
@@ -815,19 +864,19 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         };
 
         Interval.prototype.is_empty = function() {
-            return this.start == this.end;
+            return this.start.getTime() == this.end.getTime();
         };
 
         Interval.prototype.equals = function(other) {
-            return this.start == other.start && this.end == other.end;
+            return this.start.getTime() == other.start.getTime() && this.end.getTime() == other.end.getTime();
         };
 
         Interval.prototype.contains = function(other) {
-            return other.start >= this.start && other.end <= this.end;
+            return other.start.getTime() >= this.start.getTime() && other.end.getTime() <= this.end.getTime();
         };
 
         Interval.prototype.contains_time = function(js_dt) {
-            return this.start <= js_dt && js_dt <= this.end;
+            return this.start.getTime() <= js_dt.getTime() && js_dt.getTime() <= this.end.getTime();
         };
 
         Interval.prototype.intersects = function(other) {
@@ -845,7 +894,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return new Interval(start, end);
         };
 
-        Interval.prototype.sub_intervals = function(other) {
+        Interval.prototype.subintervals = function(other) {
             var subintv = []
             if (this.contains(other)) {
                 subintv.push(new Interval(this.start, other.start), other, new Interval(other.end, this.end));
@@ -855,7 +904,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
             else if (this.intersects(other)) {
                 bounds = [this.start, this.end, other.start, other.end];
-                bounds.sort(function(a, b) { return b - a; });
+                bounds.sort(function(a, b) { return a - b; });
                 subintv.push(new Interval(bounds[0], bounds[1]), new Interval(bounds[1], bounds[2]), new Interval(bounds[2], bounds[3]));
             }
             else {
@@ -868,17 +917,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.Interval = Interval;
     };
 
-    this.TimeFrame.prototype.add_entities = function(entities) {
+    this.MultiEntityFrameSet.prototype.add_entities = function(entities) {
         this._entities = this._entities.concat(entities);
+        this._prune_table();
         this._build_table();
     };
 
-    this.TimeFrame.prototype.remove_entities = function(entities) {
-        this._entities = this._entities.filter(function(elem) { return entities.includes(elem); });
-        this._build_table();
-    };
-
-    this.TimeFrame.prototype.query = function(js_dt) {
+    this.MultiEntityFrameSet.prototype.query = function(js_dt) {
         for (var iintv in this._intv_table) {
             if (this._intv_table[iintv].contains_time(js_dt)) {
                 return this._ent_table[iintv];
@@ -887,7 +932,25 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         return null;
     };
 
-    this.TimeFrame.prototype._build_table = function() {
+    this.MultiEntityFrameSet.prototype.get_times = function() {
+        starts = [];
+        for (var iintv in this._intv_table) {
+            starts.push(this._intv_table[iintv].start);
+        }
+
+        return starts;
+    };
+
+    this.MultiEntityFrameSet.prototype._prune_table = function() {
+        var kick_out_time = new Date() - this._max_age;
+        for (var ient = this._entities.length - 1; ient >= 0; ient--) {
+            if (this._entities[ient].expire < kick_out_time) {
+                this._entities = this._entities.splice(ient, 1);
+            }
+        }
+    };
+
+    this.MultiEntityFrameSet.prototype._build_table = function() {
         this._intv_table = [];
         this._ent_table = [];
 
@@ -918,9 +981,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 }
                 else {
                     // If there is an overlap, remove the old interval(s) and construct new ones with new lists
-                    var idxs = intersections.keys();
+                    var idxs = Object.keys(intersections);
                     idxs.sort(); idxs.reverse();
-                    for (var iidx in indxs) {
+                    for (var iidx in idxs) {
                         var idx = idxs[iidx];
                         var subintv = intersections[idx];
 
@@ -978,7 +1041,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
    /********************
     * ShapeLayer code
     ********************/
-    this.ShapeLayer = function(gl, map_proj, cls, name) {
+    this.ShapeLayer = function(gl, map_proj, max_age, cls, name) {
         this._gl = gl;
         this._map_proj = map_proj;
         this.cls = cls;
@@ -1012,7 +1075,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
         }
 
-        this._frames = new _mod.TimeFrame(create_polyline.bind(this));
+        this._frames = new _mod.MultiEntityFrameSet(create_polyline.bind(this), max_age);
 
         this._layer_id = sprintf('shapefile.%s.%s', cls, name);
         io.register_handler(this._layer_id, this.receive_data.bind(this));
@@ -1064,7 +1127,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
    /********************
     * Level2Layer code
     ********************/
-    this.Level2Layer = function(gl, map_proj, site, field, elev) {
+    this.Level2Layer = function(gl, map_proj, max_age, site, field, elev) {
         var _vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_tex;
@@ -1097,10 +1160,77 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         `;
 
         this._gl = gl;
+        var process_radar_data = function(l2_file) {
+            var rdr_loc = [l2_file.site_longitude, l2_file.site_latitude];
+
+            var st_rn = l2_file.st_range / 1000;
+            var st_az = l2_file.st_azimuth;
+            var drng = l2_file.drng / 1000;
+            var dazim = l2_file.dazim;
+            var tex_size_x = l2_file.n_gates;
+            var tex_size_y = l2_file.n_rays;
+            var skip_rng = l2_file.n_gates / 8;
+            var skip_az = 1;
+
+            var ipt = 0;
+            var pts = [];
+            var tex_coords = [];
+            for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz += skip_az) {
+                for (var irn = 0; irn < l2_file.n_gates + 1; irn += skip_rng) {
+                    pts[ipt + 0] = (st_rn + (irn - 0.5) * drng);
+                    pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
+
+                    tex_coords[ipt + 0] = irn / tex_size_x;
+                    tex_coords[ipt + 1] = iaz / tex_size_y;
+
+                    ipt += 2;
+                }
+            }
+
+            var refl_img = [];
+            var ipt = 0;
+            l2_file.data = new Float32Array(l2_file.data.buffer);
+            for (var iaz = 0; iaz < tex_size_y; iaz++) {
+                for (var irn = 0; irn < tex_size_x; irn++) {
+                    var igt = l2_file.n_gates * iaz + irn;
+                    var color = this.color_maps[this.field].cmap(l2_file.data[igt]);
+                    refl_img[ipt + 0] = color[0];
+                    refl_img[ipt + 1] = color[1];
+                    refl_img[ipt + 2] = color[2];
+                    refl_img[ipt + 3] = color[3];
+                    ipt += 4;
+                }
+            }
+
+            idxs = [];
+            var ipt = 0;
+            for (var iaz = 0; iaz < l2_file.n_rays / skip_az; iaz++) { 
+                for (var irn = 0; irn < (l2_file.n_gates + 1) / skip_rng; irn++) {
+                    var idx = (Math.floor((l2_file.n_gates + 1) / skip_rng) + 1) * iaz + irn;
+                    if (irn == 0 && iaz > 0) { 
+                        idxs[ipt - 1] = idx;
+                    }
+
+                    idxs[ipt + 0] = idx;
+                    idxs[ipt + 1] = idx + Math.floor((l2_file.n_gates + 1) / skip_rng) + 1;
+                    ipt += 2;
+                }
+
+                if (iaz < l2_file.n_rays / skip_az) {
+                    idxs[ipt] = idxs[ipt - 1];
+                    ipt += 2;
+                }
+            }
+
+            return {'timestamp': l2_file.valid, 'rdrloc': rdr_loc, 'pts': new Float32Array(pts), 'idxs': new Uint16Array(idxs),
+                    'tex_coords': new Float32Array(tex_coords), 'tex_info': {'sizex':tex_size_x, 'sizey':tex_size_y, 'image':new Uint8Array(refl_img)}};
+        };
 
         this.site = site;
         this.field = field;
         this.elev = parseFloat(elev);
+
+        this._frames = new _mod.SingleEntityFrameSet(process_radar_data.bind(this), max_age);
 
         var _default_units = {'REF': 'dBZ', 'VEL': 'm/s'};
         this.units = _default_units[this.field];
@@ -1132,70 +1262,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return;
         }
 
-        this._l2_file = l2_file
-        this._rdr_loc = [l2_file.site_longitude, l2_file.site_latitude];
-
-        var rdr_px = this._rdr_loc;
-
-        var st_rn = l2_file.st_range / 1000;
-        var st_az = l2_file.st_azimuth;
-        var drng = l2_file.drng / 1000;
-        var dazim = l2_file.dazim;
-        var tex_size_x = l2_file.n_gates;
-        var tex_size_y = l2_file.n_rays;
-        var skip_rng = l2_file.n_gates / 8;
-        var skip_az = 1;
-
-        var ipt = 0;
-        this._pts = [];
-        this._tex_coords = [];
-        for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz += skip_az) {
-            for (var irn = 0; irn < l2_file.n_gates + 1; irn += skip_rng) {
-                this._pts[ipt + 0] = (st_rn + (irn - 0.5) * drng);
-                this._pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
-
-                this._tex_coords[ipt + 0] = irn / tex_size_x;
-                this._tex_coords[ipt + 1] = iaz / tex_size_y;
-
-                ipt += 2;
-            }
-        }
-
-        var refl_img = [];
-        var ipt = 0;
-        for (var iaz = 0; iaz < tex_size_y; iaz++) {
-            for (var irn = 0; irn < tex_size_x; irn++) {
-                var igt = l2_file.n_gates * iaz + irn;
-                var color = this.color_maps[this.field].cmap(l2_file.data[igt]);
-                refl_img[ipt + 0] = color[0];
-                refl_img[ipt + 1] = color[1];
-                refl_img[ipt + 2] = color[2];
-                refl_img[ipt + 3] = color[3];
-                ipt += 4;
-            }
-        }
-
-        this._idxs = [];
-        var ipt = 0;
-        for (var iaz = 0; iaz < l2_file.n_rays / skip_az; iaz++) { 
-            for (var irn = 0; irn < (l2_file.n_gates + 1) / skip_rng; irn++) {
-                var idx = (Math.floor((l2_file.n_gates + 1) / skip_rng) + 1) * iaz + irn;
-                if (irn == 0 && iaz > 0) { 
-                    this._idxs[ipt - 1] = idx;
-                }
-
-                this._idxs[ipt + 0] = idx;
-                this._idxs[ipt + 1] = idx + Math.floor((l2_file.n_gates + 1) / skip_rng) + 1;
-                ipt += 2;
-            }
-
-            if (iaz < l2_file.n_rays / skip_az) {
-                this._idxs[ipt] = this._idxs[ipt - 1];
-                ipt += 2;
-            }
-        }
-
-        this._shader.register_texture('radar', 'u_tex', {'sizex':tex_size_x, 'sizey':tex_size_y, 'image':refl_img});
+        this._frames.add_entity(l2_file.entities[0]);
 
         if (this.active) {
             gui.set_status(this);
@@ -1204,11 +1271,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.Level2Layer.prototype.set_status = function(status_bar) {
-        if (this._l2_file !== undefined) {
-            var time_parse = d3.timeParse("%Y%m%d_%H%M");
-            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
-            var time_str = time_fmt(time_parse(this._l2_file.timestamp))
-            var stat = sprintf("%s %.1f\u00b0 %s (%s)", this._l2_file.site, this._l2_file.elevation, this._l2_file.field, time_str);
+        var l2obj = this._frames.query(this._dt);
+        if (l2obj !== null) {
+            var time_fmt = d3.utcFormat("%H%M UTC %d %b %Y");
+            var time_str = time_fmt(l2obj.timestamp)
+            var stat = sprintf("%s %.1f\u00b0 %s (%s)", this.site, this.elev, this.field, time_str);
         }
         else {
             var stat = sprintf("Downloading %s data ...", this.site);
@@ -1231,21 +1298,23 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     }
 
     this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
-        if (this._l2_file === undefined) {
+        var l2obj = this._frames.query(this._dt);
+        if (l2obj === null) {
             return;
         }
 
-        gl = this._gl;
+        var gl = this._gl;
 
         this._shader.enable_program();
-        this._shader.bind_attribute('a_pos', this._pts);
-        this._shader.bind_attribute('a_tex', this._tex_coords);
+        this._shader.register_texture('radar', 'u_tex', l2obj.tex_info);
+        this._shader.bind_attribute('a_pos', l2obj.pts);
+        this._shader.bind_attribute('a_tex', l2obj.tex_coords);
         this._shader.bind_uniform('u_zoom', zoom_matrix, true);
-        this._shader.bind_uniform('u_rdr_pos', this._rdr_loc);
+        this._shader.bind_uniform('u_rdr_pos', l2obj.rdrloc);
         this._shader.bind_texture('radar', 0);
-        this._shader.bind_index_array(this._idxs);
+        this._shader.bind_index_array(l2obj.idxs);
 
-        gl.drawElements(gl.TRIANGLE_STRIP, this._idxs.length, gl.UNSIGNED_SHORT, 0);
+        gl.drawElements(gl.TRIANGLE_STRIP, l2obj.idxs.length, gl.UNSIGNED_SHORT, 0);
     };
 
     this.Level2Layer.prototype.layer_menu_html = function() {
@@ -1349,7 +1418,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
    /********************
     * ObsLayer code
     ********************/
-    this.ObsLayer = function(gl, map_proj, source) {
+    this.ObsLayer = function(gl, map_proj, max_age, source) {
         var _text_vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_anch;
@@ -1406,7 +1475,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this._gl = gl;
         this.source = source;
-        this._n_bytes = 52;
+        this._n_bytes = 36;
         this._obs_file = undefined;
         this._dpr = window.devicePixelRatio || 1;
 
@@ -1434,7 +1503,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._barb_shader.register_uniform('vec3', 'u_fontcolor');
         this._barb_shader.register_uniform('mat3', 'u_zoom');
         this._barb_shader.register_uniform('vec2', 'u_viewport');
-        this._barb_shader.register_texture('wind_barb', 'u_tex', {'sizex':1, 'sizey':1, 'image':[255, 255, 255, 255]});
+        this._barb_shader.register_texture('wind_barb', 'u_tex', {'sizex':1, 'sizey':1, 'image':new Uint8Array([255, 255, 255, 255])});
 
         this._text_from_ob = {
             'id': function(ob) {
@@ -1470,6 +1539,77 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             'td': {'color': [0.0, 0.8, 0.0], 'align_h':'right', 'align_v':'top'},
         }
 
+        function process_obs(entities) {
+            var text_info = {};
+            for (var obvar in this._text_from_ob) {
+                text_info[obvar] = {'anch': [], 'vert': [], 'tex': []};
+            }
+            var barb_info = {'anch': [], 'vert': [], 'tex': []};
+
+            var valid_time = new Date("2010/01/01");
+            for (var ient in entities) {
+                if (entities[ient].valid > valid_time) {
+                    valid_time = entities[ient].valid;
+                }
+            }
+
+            var ob_ids = [];
+
+            for (var ient in entities) {
+                if (entities[ient].valid < valid_time) {
+                    continue;
+                }
+                var obs_data = entities[ient].data
+                var n_obs = obs_data.length / this._n_bytes;
+
+                for (var iob = 0; iob < n_obs; iob++) {
+                    var ob_buf = obs_data.slice(iob * this._n_bytes, (iob + 1) * this._n_bytes);
+                    var ob = {};
+
+                    var id = [];
+                    for (var ibyte = 0; ibyte < 5; ibyte++) { id.push(String.fromCharCode(ob_buf[ibyte])); }
+                    ob.id = id.join("");
+                    if (!ob_ids.includes(ob.id)) {
+                        ob_ids.push(ob.id);
+
+                        var sec1 = new Float32Array(ob_buf.slice(8, 36).buffer);
+
+                        ob.latitude    = sec1[0];
+                        ob.longitude   = sec1[1];
+                        ob.pressure    = sec1[2];
+                        ob.temperature = sec1[3];
+                        ob.dewpoint    = sec1[4];
+                        ob.wind_dir    = sec1[5];
+                        ob.wind_spd    = sec1[6];
+
+                        for (var obvar in this._text_from_ob) {
+                            var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.longitude, ob.latitude], 12, 
+                                                                 this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v'], this._dpr);
+                            for (var txti in coords) {
+                                text_info[obvar][txti].push(coords[txti]);
+                            }
+                        }
+                        var coords = this._gen_wind_barb([ob.longitude, ob.latitude], ob.wind_spd, ob.wind_dir);
+                        for (var brbi in coords) {
+                            barb_info[brbi].push(coords[brbi]);
+                        }
+                    }
+                }
+            }
+
+            for (var obvar in text_info) {
+                for (var txti in text_info[obvar]) {
+                    text_info[obvar][txti] = new Float32Array([].concat.apply([], text_info[obvar][txti]));
+                }
+            }
+            for (var brbi in barb_info) {
+                barb_info[brbi] = new Float32Array([].concat.apply([], barb_info[brbi]));
+            }
+
+            return {'timestamp': valid_time, 'barb_info': barb_info, 'text_info': text_info}
+        }
+
+        this._frames = new MultiEntityFrameSet(process_obs.bind(this), max_age);
         this._layer_id = 'obs.' + this.source;
         io.register_handler(this._layer_id, this.receive_data.bind(this));
         io.request({'action':'activate', 'type':'obs', 'source':this.source});
@@ -1484,60 +1624,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return;
         }
 
-        this._obs_file = obs;
-        obs.data = new Uint8Array(obs.data.buffer);
-        var n_obs = obs.data.length / this._n_bytes;
-
-        this._text_info = {};
-        for (var obvar in this._text_from_ob) {
-            this._text_info[obvar] = {'anch': [], 'vert': [], 'tex': []};
-        }
-        this._barb_info = {'anch': [], 'vert': [], 'tex': []};
-
-        for (var iob = 0; iob < n_obs; iob++) {
-            var ob_buf = obs.data.slice(iob * this._n_bytes, (iob + 1) * this._n_bytes);
-            var ob = {};
-
-            var id = [];
-            for (var ibyte = 0; ibyte < 5; ibyte++) { id.push(String.fromCharCode(ob_buf[ibyte])); }
-            ob.id = id.join("");
-
-            var time = [];
-            for (var ibyte = 16; ibyte < 29; ibyte++) { time.push(String.fromCharCode(ob_buf[ibyte])); }
-            ob.time = time.join("");
-
-            var sec1 = new Float32Array(ob_buf.slice(8, 16).buffer);
-            var sec2 = new Float32Array(ob_buf.slice(32, 52).buffer);
-
-            ob.latitude    = sec1[0];
-            ob.longitude   = sec1[1];
-            ob.pressure    = sec2[0];
-            ob.temperature = sec2[1];
-            ob.dewpoint    = sec2[2];
-            ob.wind_dir    = sec2[3];
-            ob.wind_spd    = sec2[4];
-
-            for (var obvar in this._text_from_ob) {
-                var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.longitude, ob.latitude], 12, 
-                                                     this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v'], this._dpr);
-                for (var txti in coords) {
-                    this._text_info[obvar][txti].push(coords[txti]);
-                }
-            }
-            var coords = this._gen_wind_barb([ob.longitude, ob.latitude], ob.wind_spd, ob.wind_dir);
-            for (var brbi in coords) {
-                this._barb_info[brbi].push(coords[brbi]);
-            }
-        }
-
-        for (var obvar in this._text_info) {
-            for (var txti in this._text_info[obvar]) {
-                this._text_info[obvar][txti] = [].concat.apply([], this._text_info[obvar][txti]);
-            }
-        }
-        for (var brbi in this._barb_info) {
-            this._barb_info[brbi] = [].concat.apply([], this._barb_info[brbi]);
-        }
+        this._frames.add_entities(obs.entities);
+        console.log(this._frames._intv_table);
 
         if (this.active) {
             gui.set_status(this);
@@ -1546,11 +1634,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.ObsLayer.prototype.set_status = function(status_bar) {
+        var obs_obj = this._frames.query(this._dt);
         var names = {'metar':'METAR', 'mesonet':'Mesonet'};
-        if (this._obs_file !== undefined) {
-            var time_parse = d3.timeParse("%Y%m%d_%H%M");
-            var time_fmt = d3.timeFormat("%H%M UTC %d %b %Y");
-            var time_str = time_fmt(time_parse(this._obs_file.nominal_time))
+        if (obs_obj !== null) {
+            var time_fmt = d3.utcFormat("%H%M UTC %d %b %Y");
+            var time_str = time_fmt(obs_obj.timestamp)
             var stat = sprintf("%s Station Plots (%s)", names[this.source], time_str);
         }
         else {
@@ -1567,36 +1655,37 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
-        if (this._obs_file === undefined) {
+        var obs_obj = this._frames.query(this._dt);
+        if (obs_obj === null) {
             return;
         }
 
         var gl = this._gl;
 
         this._barb_shader.enable_program();
-        this._barb_shader.bind_attribute('a_pos', this._barb_info['vert']);
-        this._barb_shader.bind_attribute('a_anch', this._barb_info['anch']);
-        this._barb_shader.bind_attribute('a_tex', this._barb_info['tex']);
+        this._barb_shader.bind_attribute('a_pos', obs_obj.barb_info['vert']);
+        this._barb_shader.bind_attribute('a_anch', obs_obj.barb_info['anch']);
+        this._barb_shader.bind_attribute('a_tex', obs_obj.barb_info['tex']);
         this._barb_shader.bind_uniform('u_zoom', zoom_matrix, true);
         this._barb_shader.bind_uniform('u_viewport', [this._vp_width, this._vp_height]);
         this._barb_shader.bind_uniform('u_fontcolor', [0, 0, 0]);
         this._barb_shader.bind_texture('wind_barb', 2);
 
-        gl.drawArrays(gl.TRIANGLES, 0, this._barb_info['vert'].length / 2);
+        gl.drawArrays(gl.TRIANGLES, 0, obs_obj.barb_info['vert'].length / 2);
 
         this._font_shader.enable_program();
         this._font_shader.bind_texture('font', 1);
         this._font_shader.bind_uniform('u_zoom', zoom_matrix, true);
         this._font_shader.bind_uniform('u_viewport', [this._vp_width, this._vp_height]);
 
-        for (var obvar in this._text_info) {
+        for (var obvar in obs_obj.text_info) {
             var color = this._text_fmt[obvar]['color'];
             this._font_shader.bind_uniform('u_fontcolor', color);
-            this._font_shader.bind_attribute('a_pos', this._text_info[obvar]['vert']);
-            this._font_shader.bind_attribute('a_anch', this._text_info[obvar]['anch']);
-            this._font_shader.bind_attribute('a_tex', this._text_info[obvar]['tex']);
+            this._font_shader.bind_attribute('a_pos', obs_obj.text_info[obvar]['vert']);
+            this._font_shader.bind_attribute('a_anch', obs_obj.text_info[obvar]['anch']);
+            this._font_shader.bind_attribute('a_tex', obs_obj.text_info[obvar]['tex']);
 
-            gl.drawArrays(gl.TRIANGLES, 0, this._text_info[obvar]['vert'].length / 2);
+            gl.drawArrays(gl.TRIANGLES, 0, obs_obj.text_info[obvar]['vert'].length / 2);
         }
     };
 
@@ -1871,6 +1960,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             }
         }
 
+        this._pts = new Float32Array(this._pts);
+        this._pts_prev = new Float32Array(this._pts_prev);
+        this._pts_next = new Float32Array(this._pts_next);
+
         this._color = color;
         this._thick = thickness;
 
@@ -2010,7 +2103,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         if (tex_data['sizex'] !== undefined) {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, tex_data['sizex'], tex_data['sizey'], 0, gl.RGBA, 
-                          gl.UNSIGNED_BYTE, new Uint8Array(tex_data['image']));
+                          gl.UNSIGNED_BYTE, tex_data['image']);
         }
         else {
             gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, tex_data);
@@ -2050,7 +2143,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         gl.enableVertexAttribArray(this._attrs[attr_name]);
         gl.bindBuffer(gl.ARRAY_BUFFER, this._attr_bufs[attr_name]);
         gl.vertexAttribPointer(this._attrs[attr_name], 2, gl.FLOAT, false, 0, 0);
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(attr_data), gl.DYNAMIC_DRAW);
+        gl.bufferData(gl.ARRAY_BUFFER, attr_data, gl.DYNAMIC_DRAW);
     };
 
     this.WGLShader.prototype.bind_uniform = function(uni_name, uni_data, is_matrix) {
@@ -2092,8 +2185,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.WGLShader.prototype.bind_index_array = function(idx_ary) {
+        var gl = this.gl;
         gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this._idx_ary);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(idx_ary), gl.DYNAMIC_DRAW);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, idx_ary, gl.DYNAMIC_DRAW);
     };
 
     this.WGLShader.prototype._compile_shaders = function(vert_shader_src, frag_shader_src) {

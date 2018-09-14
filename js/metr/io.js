@@ -50,24 +50,29 @@ define(['d3', 'sprintf', 'base64js', 'pako_inflate'], function(d3, sprintf, base
                         var infl_ba = pako.inflate(event.target.result);
                         var msg_text = _this.ba_to_str(infl_ba);
                         var msg_json = JSON.parse(msg_text);
-                        for (var ient = 0; ient < msg_json.entities.length; ient++) {
-                            msg_json.entities[ient].valid = parser(msg_json.entities[ient].valid);
-                            msg_json.entities[ient].expires = parser(msg_json.entities[ient].expires);
+                        if (msg_json.entities !== undefined) {
+                            for (var ient = 0; ient < msg_json.entities.length; ient++) {
+                                msg_json.entities[ient].valid = parser(msg_json.entities[ient].valid);
+                                msg_json.entities[ient].expires = parser(msg_json.entities[ient].expires);
 
-                            if (msg_json.entities[ient].shape !== undefined) {
-                                var raw_ba = base64.toByteArray(msg_json.entities[ient].shape.coordinates);
-                                var line_array = new Float32Array(raw_ba.buffer);
+                                if (msg_json.entities[ient].shape !== undefined) {
+                                    var raw_ba = base64.toByteArray(msg_json.entities[ient].shape.coordinates);
+                                    var line_array = new Float32Array(raw_ba.buffer);
 
-                                var line = [];
-                                for (var icd = 0; icd < line_array.length; icd++) {
-                                    if (isNaN(line_array[icd])) {
+                                    var line = [];
+                                    for (var icd = 0; icd < line_array.length; icd++) {
+                                        if (isNaN(line_array[icd])) {
                                         line.push(NaN, NaN);
+                                        }
+                                        else {
+                                            line.push(line_array[icd]);
+                                        }
                                     }
-                                    else {
-                                        line.push(line_array[icd]);
-                                    }
+                                    msg_json.entities[ient].shape.coordinates = line;
                                 }
-                                msg_json.entities[ient].shape.coordinates = line;
+                                else if (msg_json.entities[ient].data !== undefined) {
+                                    msg_json.entities[ient].data = base64.toByteArray(msg_json.entities[ient].data);
+                                }
                             }
                         }
                         handler(msg_json);
