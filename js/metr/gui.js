@@ -884,8 +884,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         };
 
         Interval.prototype.intersection = function(other) {
-            start = new Date(Math.max(this.start, other.start));
-            end = new Date(Math.min(this.end, other.end));
+            var start = new Date(Math.max(this.start, other.start));
+            var end = new Date(Math.min(this.end, other.end));
 
             if (end < start) { 
                 end = start;
@@ -895,7 +895,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         };
 
         Interval.prototype.subintervals = function(other) {
-            var subintv = []
+            var subintv = [];
             if (this.contains(other)) {
                 subintv.push(new Interval(this.start, other.start), other, new Interval(other.end, this.end));
             }
@@ -944,7 +944,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     this.MultiEntityFrameSet.prototype._prune_table = function() {
         var kick_out_time = new Date() - this._max_age;
         for (var ient = this._entities.length - 1; ient >= 0; ient--) {
-            if (this._entities[ient].expire < kick_out_time) {
+            if (this._entities[ient].expires < kick_out_time) {
                 this._entities = this._entities.splice(ient, 1);
             }
         }
@@ -954,17 +954,41 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._intv_table = [];
         this._ent_table = [];
 
+        var intv_list = [];
+        var ent_lists = [];
+
+        // Collect entities with the same interval into a list
         for (var ient in this._entities) {
             var entity = this._entities[ient];
             var entity_intv = new this.Interval(entity.valid, entity.expires);
+            
+            var entity_in_list = -1;
+            for (var iint in intv_list) {
+                if (intv_list[iint].equals(entity_intv)) {
+                    entity_in_list = iint;
+                }
+            }
 
-            if (this._intv_table.length == 0) {
-                // If this is the first entity, just push it onto the table
-                this._intv_table.push(entity_intv);
-                this._ent_table.push([entity]);
+            if (entity_in_list < 0) {
+                intv_list.push(entity_intv);
+                ent_lists.push([entity]);
             }
             else {
-                // If this is the second entity, figure out if its interval overlaps with anything already in the table
+                ent_lists[entity_in_list].push(entity);
+            }
+        }
+
+        for (var iintv in intv_list) {
+            var entity_list = ent_lists[iintv];
+            var entity_intv = intv_list[iintv];
+
+            if (this._intv_table.length == 0) {
+                // If this is the first entity list, just push it onto the table
+                this._intv_table.push(entity_intv);
+                this._ent_table.push(entity_list);
+            }
+            else {
+                // If this is the second entity list, figure out if its interval overlaps with anything already in the table
                 var intersections = {};
                 for (var iintv in this._intv_table) {
                     var intv = this._intv_table[iintv];
@@ -977,24 +1001,25 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 if (intersections.length == 0) {
                     // If there isn't an overlap, just push it onto the table
                     this._intv_table.push(entity_intv);
-                    this._ent_table.push([entity]);
+                    this._ent_table.push(entity_list);
                 }
                 else {
                     // If there is an overlap, remove the old interval(s) and construct new ones with new lists
                     var idxs = Object.keys(intersections);
+                    console.log(intersections);
                     idxs.sort(); idxs.reverse();
                     for (var iidx in idxs) {
                         var idx = idxs[iidx];
                         var subintv = intersections[idx];
 
                         this._intv_table.splice(idx, 1);
-                        var entity_list = this._ent_table.splice(idx, 1)[0];
+                        var old_entity_list = this._ent_table.splice(idx, 1)[0];
 
                         for (isintv in subintv) {
                             var sintv = subintv[isintv];
-                            var new_entity_list = entity_list.slice();
+                            var new_entity_list = old_entity_list.slice();
                             if (entity_intv.contains(sintv)) {
-                                new_entity_list.push(entity);
+                                new_entity_list = new_entity_list.concat(entity_list);
                             }
 
                             this._intv_table.push(sintv);
