@@ -205,3 +205,45 @@ div.picker div {
     cursor: pointer;
     margin:2px;
 }
+
+div#anim {
+    background: rgba(0, 0, 0, 0.6);
+    color: #ffffff;
+
+    position: fixed;
+    top: 0px;
+
+    border-bottom-left-radius:2px;
+}
+
+div#anim div {
+    float: right;
+    height: "100%";
+    vertical-align: middle;
+
+    user-select: none;
+    -moz-user-select: none;
+    -khtml-user-select: none;
+    -webkit-user-select: none;
+    -o-user-select: none;
+}
+
+div#anim div#play {
+    padding-left: 3px;
+    padding-right: 3px;
+
+    cursor: pointer;
+}
+
+div#anim div#framelist {
+    padding-left: 3px;
+    padding-right: 6px;
+}
+
+div#anim div.frame {
+    cursor: pointer;
+}
+
+div#anim div.active {
+    color: #88ff88;
+}

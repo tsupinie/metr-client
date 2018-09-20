@@ -178,6 +178,15 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.menu_tabs.selectAll('li').on('click', function() { _this.toggle_menu(this); });
         this.menu_visible = "";
 
+        this.anim = d3.select('#anim');
+        this.anim.html('<div id="play">&#x25b6;&#9616;&#9616;</div><div id="framelist"></div>')
+
+        this._anim_hgt = 30;
+        var anim_rect = this.anim.node().getBoundingClientRect()
+        this.anim.style('height', this._anim_hgt)
+                 .style('line-height', this._anim_hgt + 'px')
+                 .style('left', this.width / this.dpr - anim_rect.width);
+
         this.trans_x = 0;
         this.trans_y = 0;
         this.set_zoom(d3.zoomTransform(this.map.node()));
@@ -194,6 +203,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         io.request({'action':'activate', 'type':'gui', 'static':'wsr88ds'});
 
         this.layer_container = new LayerContainer(this._menu_bar_width);
+
+        this.anim.select('div#play')
+                 .on('click', this.layer_container.toggle_animation.bind(this.layer_container));
 
         var gl = this.map.node().getContext('webgl');
 
@@ -217,6 +229,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             _this.status.style('top', _this.height / _this.dpr - _this._stat_hgt).style('height', _this.stat_hgt);
             _this.menu.style('height', _this.height / _this.dpr - _this._stat_hgt)
+
+            var anim_rect = _this.anim.node().getBoundingClientRect()
+            _this.anim.style('left', _this.width / _this.dpr - anim_rect.width);
 /*
             var old_full_width = (old_width * _this.zoom_trans.k);
             var new_full_width = (_this.width * _this.zoom_trans.k);
@@ -427,7 +442,38 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             this.map_picker.clear();
             this.map_picker = undefined;
         }
-    }
+    };
+
+    METRGUI.prototype.update_frame_list = function(layer) {
+        this.anim.selectAll('div.frame').remove();
+
+        var _this = this;
+        var frame_times = layer.get_frame_times()
+        frame_times.reverse();
+
+        this.anim.select('#framelist')
+                 .selectAll('div.frame')
+                 .data(frame_times)
+                 .enter()
+                 .append('div')
+                 .classed('frame', true)
+                 .classed('active', function(d, i) {
+                     return d == _this.layer_container.dt || (i == 0 && _this.layer_container.dt >= d);
+                 })
+                 .attr('data-time', function(d, i) { return d.toString(); })
+                 .html('&#x25cf;')
+                 .on('click', function(dt) {
+                     d3.selectAll('div.frame').classed('active', false);
+                     d3.select(this).classed('active', true);
+                     _this.layer_container.update_time(dt);
+                 });
+
+        var framelist_rect = this.anim.select('#framelist').node().getBoundingClientRect();
+        var play_rect = this.anim.select('#play').node().getBoundingClientRect();
+
+        var anim_width = framelist_rect.width + play_rect.width;
+        this.anim.style('left', this.width / this.dpr - anim_width).style('width', anim_width + 'px');
+    };
 
     this.MapPicker = function(map_proj, data, callback) {
         this.map_proj = map_proj;
@@ -533,7 +579,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }, '165px');
 
         this._anim_intv = 500; // interval of 0.5 seconds for now
-        this._timer_id = window.setInterval(this.update_time.bind(this), this._anim_intv);
+        this.dt = new Date();
+        this._mode = 'auto-update';
+        this._animating = false;
+        this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
     };
 
     this.LayerContainer.prototype.init = function() {
@@ -691,11 +740,69 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
     };
 
-    this.LayerContainer.prototype.update_time = function() {
-        js_dt = new Date();
-        for (var ilyr in this._draw_order) {
-            this._draw_order[ilyr].set_time(js_dt);
+    this.LayerContainer.prototype.toggle_animation = function() {
+        this._animating = !this._animating;
+
+        var layer_times = this._active_layer.get_frame_times();
+        if (this.dt.getTime() == layer_times[layer_times.length - 1].getTime()) {
+            this._mode = 'auto-update'
         }
+        else {
+            this._mode = 'animate';
+        }
+    };
+
+    this.LayerContainer.prototype.animate = function() {
+        if (this._mode == 'auto-update') {
+            this.dt = new Date();
+        }
+        else if (this._animating) {
+            var layer_times = this._active_layer.get_frame_times();
+            var idx = layer_times.map(function(elem) { return elem.getTime(); }).indexOf(this.dt.getTime());
+            if (idx >= layer_times.length - 1) {
+                this.dt = layer_times[0];
+
+                if (this._timer_id === null) {
+                    this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
+                }
+            }
+            else if (idx + 1 >= layer_times.length - 1) {
+                this.dt = layer_times[idx + 1];
+
+                window.clearTimeout(this._timer_id);
+                this._timer_id = null;
+                window.setTimeout(this.animate.bind(this), this._anim_intv * 3);
+            }
+            else {
+                this.dt = layer_times[idx + 1];
+            }
+            d3.selectAll('div.frame').classed('active', false);
+            d3.select('div[data-time="' + this.dt.toString() + '"]').classed('active', true);
+        }
+
+        for (var ilyr in this._draw_order) {
+            this._draw_order[ilyr].set_time(this.dt);
+        }
+
+        gui.set_status(this._active_layer);
+        gui.draw();
+    };
+
+    this.LayerContainer.prototype.update_time = function(js_dt) {
+        this._animating = false;
+        if (this._timer_id === null) {
+            this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
+        }
+
+        var layer_times = this._active_layer.get_frame_times();
+        if (js_dt < layer_times[layer_times.length - 1]) {
+            this.dt = js_dt;
+            this._mode = 'animate';
+        }
+        else {
+            this._mode = 'auto-update';
+        }
+        this.animate();
     };
 
     this.LayerContainer.prototype._index_of_layer = function(lyr) {
@@ -842,11 +949,30 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         return most_recent;
     };
 
+    this.SingleEntityFrameSet.prototype.get_times = function() {
+        var starts = [];
+        var end_time = new Date("2018/01/01");
+        for (var iintv in this._intv_table) {
+            if (this._intv_table[iintv].start >= end_time) {
+                end_time = this._intv_table[iintv].start;
+            }
+        }
+
+        var start_time = end_time - this._max_age;
+        for (ient in this._entities) {
+            if (this._entities[ient].valid >= start_time) {
+                starts.push(this._entities[ient].valid);
+            }
+        }
+        starts.sort(function(a, b) { return a - b; })
+        return starts;
+    };
+
     this.SingleEntityFrameSet.prototype._prune_table = function() {
         var kick_out_time = new Date() - this._max_age;
         for (var ient = this._entities.length - 1; ient >= 0; ient--) {
-            if (this._entities.expires < kick_out_time) {
-                this._entities = this._entities.splice(ient, 1);
+            if (this._entities[ient].expires < kick_out_time) {
+                this._entities.splice(ient, 1);
             }
         }
     };
@@ -894,24 +1020,23 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             return new Interval(start, end);
         };
 
-        Interval.prototype.subintervals = function(other) {
-            var subintv = [];
-            if (this.contains(other)) {
-                subintv.push(new Interval(this.start, other.start), other, new Interval(other.end, this.end));
+        Interval.prototype.reinterval = function(intv_ary) {
+            var bounds = [];
+            for (iintv in intv_ary) {
+                bounds.push(intv_ary[iintv].start, intv_ary[iintv].end);
             }
-            else if (other.contains(this)) {
-                subintv.push(new Interval(other.start, this.start), this, new Interval(this.end, other.end));
-            }
-            else if (this.intersects(other)) {
-                bounds = [this.start, this.end, other.start, other.end];
-                bounds.sort(function(a, b) { return a - b; });
-                subintv.push(new Interval(bounds[0], bounds[1]), new Interval(bounds[1], bounds[2]), new Interval(bounds[2], bounds[3]));
-            }
-            else {
-                subintv.push(this, other)
-            }
+            bounds.push(this.start, this.end);
 
-            return subintv.filter(function(intv) { return !intv.is_empty(); });
+            bounds.sort(function(a, b) { return a - b; });
+            var new_intervals = [];
+            for (var iintv = 0; iintv < bounds.length - 1; iintv++) {
+                var new_intv = new Interval(bounds[iintv], bounds[iintv + 1]);
+                if (!new_intv.is_empty()) {
+                    new_intervals.push(new_intv);
+                }
+            }
+            return new_intervals;
+
         };
 
         this.Interval = Interval;
@@ -933,11 +1058,23 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.MultiEntityFrameSet.prototype.get_times = function() {
-        starts = [];
+        var starts = [];
+        var end_time = new Date("2018/01/01");
         for (var iintv in this._intv_table) {
-            starts.push(this._intv_table[iintv].start);
+            if (this._intv_table[iintv].start >= end_time) {
+                end_time = this._intv_table[iintv].start;
+            }
         }
 
+        start_time - end_time - this._max_age;        
+
+        for (var iintv in this._intv_table) {
+            if (this._intv_table[iintv].start >= start_time) {
+                starts.push(this._intv_table[iintv].start);
+            }
+        }
+
+        starts.sort(function(a, b) { return a - b; })
         return starts;
     };
 
@@ -945,89 +1082,56 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var kick_out_time = new Date() - this._max_age;
         for (var ient = this._entities.length - 1; ient >= 0; ient--) {
             if (this._entities[ient].expires < kick_out_time) {
-                this._entities = this._entities.splice(ient, 1);
+                this._entities.splice(ient, 1);
             }
         }
     };
 
     this.MultiEntityFrameSet.prototype._build_table = function() {
+        // This function needs work.
         this._intv_table = [];
         this._ent_table = [];
 
-        var intv_list = [];
-        var ent_lists = [];
-
-        // Collect entities with the same interval into a list
         for (var ient in this._entities) {
             var entity = this._entities[ient];
             var entity_intv = new this.Interval(entity.valid, entity.expires);
-            
-            var entity_in_list = -1;
-            for (var iint in intv_list) {
-                if (intv_list[iint].equals(entity_intv)) {
-                    entity_in_list = iint;
-                }
-            }
-
-            if (entity_in_list < 0) {
-                intv_list.push(entity_intv);
-                ent_lists.push([entity]);
-            }
-            else {
-                ent_lists[entity_in_list].push(entity);
-            }
-        }
-
-        for (var iintv in intv_list) {
-            var entity_list = ent_lists[iintv];
-            var entity_intv = intv_list[iintv];
 
             if (this._intv_table.length == 0) {
                 // If this is the first entity list, just push it onto the table
                 this._intv_table.push(entity_intv);
-                this._ent_table.push(entity_list);
+                this._ent_table.push([entity]);
+                continue;
             }
-            else {
-                // If this is the second entity list, figure out if its interval overlaps with anything already in the table
-                var intersections = {};
-                for (var iintv in this._intv_table) {
-                    var intv = this._intv_table[iintv];
-                    if (entity_intv.intersects(intv)) {
-                        subintv = entity_intv.subintervals(intv);
-                        intersections[iintv] = subintv;
+
+            var new_intervals = entity_intv.reinterval(this._intv_table);
+            var new_intv_table = [];
+            var new_ent_table = [];
+
+            for (var iintv in new_intervals) {
+                var intv1 = new_intervals[iintv];
+                new_intv_table.push(intv1);
+                new_ent_table.push([]);
+                var inent = new_ent_table.length - 1;
+
+                for (var jintv in this._intv_table) {
+                    var intv2 = this._intv_table[jintv];
+                    if (intv2.contains(intv1)) {
+                        new_ent_table[inent] = new_ent_table[inent].concat(this._ent_table[jintv]);
                     }
                 }
 
-                if (intersections.length == 0) {
-                    // If there isn't an overlap, just push it onto the table
-                    this._intv_table.push(entity_intv);
-                    this._ent_table.push(entity_list);
+                if (entity_intv.contains(intv1)) {
+                    new_ent_table[inent].push(entity);
                 }
-                else {
-                    // If there is an overlap, remove the old interval(s) and construct new ones with new lists
-                    var idxs = Object.keys(intersections);
-                    console.log(intersections);
-                    idxs.sort(); idxs.reverse();
-                    for (var iidx in idxs) {
-                        var idx = idxs[iidx];
-                        var subintv = intersections[idx];
 
-                        this._intv_table.splice(idx, 1);
-                        var old_entity_list = this._ent_table.splice(idx, 1)[0];
-
-                        for (isintv in subintv) {
-                            var sintv = subintv[isintv];
-                            var new_entity_list = old_entity_list.slice();
-                            if (entity_intv.contains(sintv)) {
-                                new_entity_list = new_entity_list.concat(entity_list);
-                            }
-
-                            this._intv_table.push(sintv);
-                            this._ent_table.push(new_entity_list);
-                        }
-                    }
+                if (new_ent_table[inent].length == 0) {
+                    new_intv_table.pop();
+                    new_ent_table.pop();
                 }
             }
+
+            this._intv_table = new_intv_table;
+            this._ent_table = new_ent_table;
         }
 
         for (ient in this._ent_table) {
@@ -1061,6 +1165,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.DataLayer.prototype.set_time = function(js_dt) {
         this._dt = js_dt;
+    };
+
+    this.DataLayer.prototype.get_frame_times = function() {
+        return this._frames.get_times();
     };
 
    /********************
@@ -1117,6 +1225,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         this._frames.add_entities(shp_file.entities);
+ 
+        if (this.active) {
+            gui.set_status(this);
+            gui.update_frame_list(this);
+        }
 
         gui.draw();
     };
@@ -1291,6 +1404,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         if (this.active) {
             gui.set_status(this);
+            gui.update_frame_list(this);
         }
         gui.draw();
     };
@@ -1654,6 +1768,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         if (this.active) {
             gui.set_status(this);
+            gui.update_frame_list(this);
         }
         gui.draw();
     };
