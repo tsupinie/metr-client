@@ -373,8 +373,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                          .attr('id', 'about')
                          .html('<h1>METR</h1>' +
                                '<h3>Nowcasting Tool</h3>' +
-                               '<p>v1.0 (1 December 2017)</p>' +
-                               '<p>&copy; 2017 Tim Supinie</p>' +
+                               '<p>v1.0 (1 October 2018)</p>' +
+                               '<p>&copy; 2018 Tim Supinie</p>' +
                                '<p>I\'d like to thank the Oklahoma Climate Survey for their wonderful WeatherScope program, to which I consider METR a direct successor.</p>');
             }).bind(this),
             'default': (function() {}).bind(this)
