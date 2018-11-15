@@ -621,6 +621,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
                 menu.perform_action.apply(menu, args);
                 menu.available = false;
+                this._draw_order[ilyr].set_time(this.dt);
             }
 
             this.activate_layer(this._draw_order[active_layer]);
@@ -732,6 +733,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this.save_to_cookie();
         gui.set_status(layer);
         gui.refresh_menu();
+
+        gui.update_frame_list(layer);
     };
 
     this.LayerContainer.prototype.set_layer_viewports = function(width, height) {
