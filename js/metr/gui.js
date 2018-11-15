@@ -743,8 +743,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
     };
 
-    this.LayerContainer.prototype.toggle_animation = function() {
-        this._animating = !this._animating;
+    this.LayerContainer.prototype.toggle_animation = function(is_anim) {
+        if (is_anim === undefined) {
+            is_anim = !this._animating;
+        }
+        this._animating = is_anim;
+
+        d3.select('#play').classed('active', this._animating);
 
         var layer_times = this._active_layer.get_frame_times();
         if (this.dt.getTime() == layer_times[layer_times.length - 1].getTime()) {
@@ -792,19 +797,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.LayerContainer.prototype.update_time = function(js_dt) {
-        this._animating = false;
+        this.toggle_animation(false);
+
         if (this._timer_id === null) {
             this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
         }
 
-        var layer_times = this._active_layer.get_frame_times();
-        if (js_dt < layer_times[layer_times.length - 1]) {
-            this.dt = js_dt;
-            this._mode = 'animate';
-        }
-        else {
-            this._mode = 'auto-update';
-        }
         this.animate();
     };
 
