@@ -952,10 +952,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.SingleEntityFrameSet.prototype.get_times = function() {
         var starts = [];
-        var end_time = new Date("2018/01/01");
-        for (var iintv in this._intv_table) {
-            if (this._intv_table[iintv].start >= end_time) {
-                end_time = this._intv_table[iintv].start;
+        var end_time = new Date("2010/01/01");
+        for (var ient in this._entities) {
+            if (this._entities[ient].valid >= end_time) {
+                end_time = this._entities[ient].valid;
             }
         }
 
