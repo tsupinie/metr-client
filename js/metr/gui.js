@@ -984,6 +984,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._entities = [];
         this._intv_table = [];
         this._ent_table = [];
+        this._n_entities = [];
 
         var Interval = function(start, end) {
             this.start = start;
@@ -1060,17 +1061,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.MultiEntityFrameSet.prototype.get_times = function() {
         var starts = [];
-        var end_time = new Date("2018/01/01");
+        var end_time = new Date("2009/12/31 18:00:00");
         for (var iintv in this._intv_table) {
             if (this._intv_table[iintv].start >= end_time) {
                 end_time = this._intv_table[iintv].start;
             }
         }
 
-        start_time - end_time - this._max_age;        
+        var start_time = end_time - this._max_age;
 
         for (var iintv in this._intv_table) {
-            if (this._intv_table[iintv].start >= start_time) {
+            if (this._intv_table[iintv].start >= start_time &&
+                (iintv == 0 || iintv > 0 && this._n_entities[iintv] > this._n_entities[iintv - 1])) {
                 starts.push(this._intv_table[iintv].start);
             }
         }
@@ -1089,9 +1091,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.MultiEntityFrameSet.prototype._build_table = function() {
-        // This function needs work.
         this._intv_table = [];
         this._ent_table = [];
+        this._n_entities = [];
 
         for (var ient in this._entities) {
             var entity = this._entities[ient];
@@ -1136,6 +1138,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         for (ient in this._ent_table) {
+            this._n_entities[ient] = this._ent_table[ient].length;
             this._ent_table[ient] = this._callback(this._ent_table[ient]);
         }
     };
