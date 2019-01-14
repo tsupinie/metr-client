@@ -1058,12 +1058,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.MultiEntityFrameSet.prototype.query = function(js_dt) {
+        var entities = [];
         for (var iintv in this._intv_table) {
             if (this._intv_table[iintv].contains_time(js_dt)) {
-                return this._ent_table[iintv];
+                entities.push(this._ent_table[iintv]);
             }
         }
-        return null;
+
+        if (entities.length == 0) {
+            return null;
+        }
+
+        return entities[entities.length - 1];
     };
 
     this.MultiEntityFrameSet.prototype.get_times = function() {
