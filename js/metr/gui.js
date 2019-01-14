@@ -752,6 +752,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         d3.select('#play').classed('active', this._animating);
 
         var layer_times = this._active_layer.get_frame_times();
+
         if (this.dt.getTime() == layer_times[layer_times.length - 1].getTime()) {
             this._mode = 'auto-update';
             if (!this._animating) {
@@ -1285,8 +1286,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             varying vec2 v_tex;
 
             void main() {
-                vec2 pos_lonlat = lonlat_at(u_rdr_pos, a_pos.x, a_pos.y);
-                vec2 pos_px = lcc(pos_lonlat);
+                vec2 pos_px = a_pos;
                 vec2 zoom_pos = (vec3(pos_px, 1.0) * u_zoom).xy;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
                 v_tex = a_tex;
@@ -1317,16 +1317,25 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             var dazim = l2_file.dazim;
             var tex_size_x = l2_file.n_gates;
             var tex_size_y = l2_file.n_rays;
-            var skip_rng = l2_file.n_gates / 8;
+            var skip_rng = l2_file.n_gates / 2;
             var skip_az = 1;
 
             var ipt = 0;
             var pts = [];
             var tex_coords = [];
+            var _geo = new geo.geodesic();
+            var pt_az, pt_rn, pt, xy;
+
             for (var iaz = 0; iaz < l2_file.n_rays + 1; iaz += skip_az) {
                 for (var irn = 0; irn < l2_file.n_gates + 1; irn += skip_rng) {
-                    pts[ipt + 0] = (st_rn + (irn - 0.5) * drng);
-                    pts[ipt + 1] = (st_az + (iaz - 0.5) * dazim);
+                    pt_rn = (st_rn + (irn - 0.5) * drng);
+                    pt_az = (st_az + (iaz - 0.5) * dazim);
+
+                    pt = _geo.lonlat_at(rdr_loc, pt_rn, pt_az);
+                    xy = map_proj.map(pt);
+
+                    pts[ipt + 0] = xy[0];
+                    pts[ipt + 1] = xy[1];
 
                     tex_coords[ipt + 0] = irn / tex_size_x;
                     tex_coords[ipt + 1] = iaz / tex_size_y;
