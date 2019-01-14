@@ -753,7 +753,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         var layer_times = this._active_layer.get_frame_times();
         if (this.dt.getTime() == layer_times[layer_times.length - 1].getTime()) {
-            this._mode = 'auto-update'
+            this._mode = 'auto-update';
+            if (!this._animating) {
+                window.clearTimeout(this._timer_id);
+                this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
+            }
         }
         else {
             this._mode = 'animate';
@@ -764,25 +768,30 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         if (this._mode == 'auto-update') {
             this.dt = new Date();
         }
-        else if (this._animating) {
+        else if (this._mode == 'animate') {
             var layer_times = this._active_layer.get_frame_times();
             var idx = layer_times.map(function(elem) { return elem.getTime(); }).indexOf(this.dt.getTime());
-            if (idx >= layer_times.length - 1) {
-                this.dt = layer_times[0];
+            if (this._animating) {
+                if (idx >= layer_times.length - 1) {
+                    this.dt = layer_times[0];
 
-                if (this._timer_id === null) {
-                    this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
+                    if (this._timer_id === null) {
+                        this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
+                    }
+                }
+                else if (idx + 1 >= layer_times.length - 1) {
+                    this.dt = layer_times[idx + 1];
+
+                    window.clearTimeout(this._timer_id);
+                    this._timer_id = null;
+                    window.setTimeout(this.animate.bind(this), this._anim_intv * 3);
+                }
+                else {
+                    this.dt = layer_times[idx + 1];
                 }
             }
-            else if (idx + 1 >= layer_times.length - 1) {
-                this.dt = layer_times[idx + 1];
-
-                window.clearTimeout(this._timer_id);
-                this._timer_id = null;
-                window.setTimeout(this.animate.bind(this), this._anim_intv * 3);
-            }
             else {
-                this.dt = layer_times[idx + 1];
+                this.dt = layer_times[idx];
             }
             d3.selectAll('div.frame').classed('active', false);
             d3.select('div[data-time="' + this.dt.toString() + '"]').classed('active', true);
@@ -797,11 +806,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     };
 
     this.LayerContainer.prototype.update_time = function(js_dt) {
+        this.dt = js_dt;
         this.toggle_animation(false);
-
-        if (this._timer_id === null) {
-            this._timer_id = window.setInterval(this.animate.bind(this), this._anim_intv);
-        }
 
         this.animate();
     };
