@@ -248,7 +248,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             _this.trans_y = -(_this.height - _this.init_height) / 2;
 
             _this.set_zoom(d3.zoomTransform(_this.map.node()));
-            _this.layer_container.set_layer_viewports(_this.width, _this.height);
             _this.draw();
         });
 
@@ -302,7 +301,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         if (this.map_picker !== undefined) {
             this.map_picker.draw(this.zoom_trans);
         }
-        this.layer_container.draw_layers(zoom_matrix, this.zoom_trans.k);
+
+        ctx = {'zoom_matrix': zoom_matrix, 'zoom_fac': this.zoom_trans.k, 
+               'vp_width': this.width, 'vp_height': this.height};
+
+        this.layer_container.draw_layers(ctx);
     };
 
     METRGUI.prototype.create_layer = function(callback, LayerType) {
@@ -313,7 +316,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var lyr = Object.create(LayerType.prototype);
         LayerType.apply(lyr, args);
 
-        lyr.set_viewport(this.width, this.height);
         lyr.active = false;
 
         callback(lyr);
@@ -649,9 +651,9 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         utils.set_cookie('layers', layer_strs.join('|'));
     };
 
-    this.LayerContainer.prototype.draw_layers = function(zoom_matrix, zoom_fac) {
+    this.LayerContainer.prototype.draw_layers = function(ctx) {
         for (ilyr in this._draw_order) {
-            this._draw_order[ilyr].draw(zoom_matrix, zoom_fac);
+            this._draw_order[ilyr].draw(ctx);
         }
     };
 
@@ -735,12 +737,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         gui.refresh_menu();
 
         gui.update_frame_list(layer);
-    };
-
-    this.LayerContainer.prototype.set_layer_viewports = function(width, height) {
-        for (var ilyr in this._draw_order) {
-            this._draw_order[ilyr].set_viewport(width, height);
-        }
     };
 
     this.LayerContainer.prototype.toggle_animation = function(is_anim) {
@@ -1163,17 +1159,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._gl = gl;
     };
 
-    this.DataLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+    this.DataLayer.prototype.draw = function(ctx) {
 
     };
 
     this.DataLayer.prototype.layer_menu_html = function() {
         return "";
-    };
-
-    this.DataLayer.prototype.set_viewport = function(width, height) {
-        this._vp_width = width;
-        this._vp_height = height;
     };
 
     this.DataLayer.prototype.cleanup = function() {
@@ -1222,7 +1213,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             pts.pop(); pts.pop();
 
-            return new PolyLine(this._gl, this._map_proj, [this._vp_width, this._vp_height], pts, this._color, this._thickness);
+            return new PolyLine(this._gl, this._map_proj, pts, this._color, this._thickness);
         }
 
         this._frames = new _mod.MultiEntityFrameSet(create_polyline.bind(this), max_age);
@@ -1264,11 +1255,11 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                   .html(stat)
     }
 
-    this.ShapeLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+    this.ShapeLayer.prototype.draw = function(ctx) {
         polyline = this._frames.query(this._dt);
 
         if (polyline !== null) {
-            polyline.draw(zoom_matrix, zoom_fac);
+            polyline.draw(ctx);
         }
     };
 
@@ -1461,7 +1452,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         color_map.create_colorbar(color_bar, this.units);
     }
 
-    this.Level2Layer.prototype.draw = function(zoom_matrix, zoom_fac) {
+    this.Level2Layer.prototype.draw = function(ctx) {
         var l2obj = this._frames.query(this._dt);
         if (l2obj === null) {
             return;
@@ -1473,7 +1464,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.register_texture('radar', 'u_tex', l2obj.tex_info);
         this._shader.bind_attribute('a_pos', l2obj.pts);
         this._shader.bind_attribute('a_tex', l2obj.tex_coords);
-        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_zoom', ctx.zoom_matrix, true);
         this._shader.bind_uniform('u_rdr_pos', l2obj.rdrloc);
         this._shader.bind_texture('radar', 0);
         this._shader.bind_index_array(l2obj.idxs);
@@ -1819,7 +1810,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                   .html(stat)
     };
 
-    this.ObsLayer.prototype.draw = function(zoom_matrix, zoom_fac) {
+    this.ObsLayer.prototype.draw = function(ctx) {
         var obs_obj = this._frames.query(this._dt);
         if (obs_obj === null) {
             return;
@@ -1831,8 +1822,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._barb_shader.bind_attribute('a_pos', obs_obj.barb_info['vert']);
         this._barb_shader.bind_attribute('a_anch', obs_obj.barb_info['anch']);
         this._barb_shader.bind_attribute('a_tex', obs_obj.barb_info['tex']);
-        this._barb_shader.bind_uniform('u_zoom', zoom_matrix, true);
-        this._barb_shader.bind_uniform('u_viewport', [this._vp_width, this._vp_height]);
+        this._barb_shader.bind_uniform('u_zoom', ctx.zoom_matrix, true);
+        this._barb_shader.bind_uniform('u_viewport', [ctx.vp_width, ctx.vp_height]);
         this._barb_shader.bind_uniform('u_fontcolor', [0, 0, 0]);
         this._barb_shader.bind_texture('wind_barb', 2);
 
@@ -2086,7 +2077,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
    /********************
     * PolyLine code
     ********************/
-    this.PolyLine = function(gl, map_proj, viewport, pts, color, thickness) {
+    this.PolyLine = function(gl, map_proj, pts, color, thickness) {
         var pts_next = pts.slice(2);
         pts_next.push(pts[pts.length - 2], pts[pts.length - 1]);
         var pts_prev = pts.slice(0, pts.length - 2);
@@ -2175,7 +2166,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         `;
 
         this._gl = gl;
-        this._viewport = viewport;
 
         this._shader = new WGLShader(gl, 'polyline', _vert_shader_src, _frag_shader_src);
         this._shader.register_plugin(map_proj);
@@ -2192,12 +2182,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._shader.register_uniform('vec3', 'u_color');
     }
 
-    this.PolyLine.prototype.draw = function(zoom_matrix, zoom_fac) {
+    this.PolyLine.prototype.draw = function(ctx) {
         this._shader.enable_program();
-        this._shader.bind_uniform('u_zoom', zoom_matrix, true);
+        this._shader.bind_uniform('u_zoom', ctx.zoom_matrix, true);
         this._shader.bind_uniform('u_color', this._color);
         this._shader.bind_uniform('u_thickness', this._thick);
-        this._shader.bind_uniform('u_viewport', this._viewport);
+        this._shader.bind_uniform('u_viewport', [ctx.vp_width, ctx.vp_height]);
 
         this._shader.bind_attribute('a_prev', this._pts_prev);
         this._shader.bind_attribute('a_pos', this._pts);
