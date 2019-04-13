@@ -1574,25 +1574,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
     * ObsLayer code
     ********************/
     this.ObsLayer = function(gl, map_proj, max_age, source) {
-        var _text_vert_shader_src = `
-            attribute vec2 a_pos;
-            attribute vec2 a_anch;
-            attribute vec2 a_tex;
-            uniform mat3 u_zoom;
-            uniform vec2 u_viewport;
-
-            varying vec2 v_tex;
-
-            void main() {
-                vec2 proj_pos = lcc(a_anch);
-                vec2 zoom_anch_pos = (vec3(proj_pos, 1.0) * u_zoom).xy;
-                vec2 zoom_pos = zoom_anch_pos + a_pos / u_viewport;
-                gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
-
-                v_tex = a_tex;
-            }
-        `;
-
         var _barb_vert_shader_src = `
             attribute vec2 a_pos;
             attribute vec2 a_anch;
@@ -1633,19 +1614,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._n_bytes = 36;
         this._obs_file = undefined;
         this._dpr = window.devicePixelRatio || 1;
-
-        this._font_shader = new WGLShader(gl, 'font', _text_vert_shader_src, _frag_shader_src);
-        this._font_shader.register_plugin(map_proj);
-        this._font_shader.register_plugin(new geo.geodesic());
-        this._font_shader.compile_program();
-
-        this._font_shader.register_attribute('a_pos');
-        this._font_shader.register_attribute('a_anch');
-        this._font_shader.register_attribute('a_tex');
-        this._font_shader.register_uniform('vec3', 'u_fontcolor');
-        this._font_shader.register_uniform('mat3', 'u_zoom');
-        this._font_shader.register_uniform('vec2', 'u_viewport');
-        this._font_shader.register_texture('font', 'u_tex', _mod.font_atlas.get_texture(), true);
 
         this._barb_shader = new WGLShader(gl, 'barb', _barb_vert_shader_src, _frag_shader_src);
         this._barb_shader.register_plugin(map_proj);
@@ -1695,9 +1663,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         }
 
         function process_obs(entities) {
-            var text_info = {};
+            var text = {};
             for (var obvar in this._text_from_ob) {
-                text_info[obvar] = {'anch': [], 'vert': [], 'tex': []};
+                var fmt = this._text_fmt[obvar];
+                text[obvar] = new MultiText(gl, fmt['align_h'], fmt['align_v'], fmt['color'], 12, this._dpr);
             }
             var barb_info = {'anch': [], 'vert': [], 'tex': []};
 
@@ -1737,12 +1706,10 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                         ob.wind_dir    = sec1[5];
                         ob.wind_spd    = sec1[6];
 
+                        var ob_pt = map_proj.map([ob.longitude, ob.latitude]);
+
                         for (var obvar in this._text_from_ob) {
-                            var coords = _mod.font_atlas.gen_str(this._text_from_ob[obvar](ob), [ob.longitude, ob.latitude], 12, 
-                                                                 this._text_fmt[obvar]['align_h'], this._text_fmt[obvar]['align_v'], this._dpr);
-                            for (var txti in coords) {
-                                text_info[obvar][txti].push(coords[txti]);
-                            }
+                            text[obvar].add_string(ob_pt[0], ob_pt[1], this._text_from_ob[obvar](ob));
                         }
                         var coords = this._gen_wind_barb([ob.longitude, ob.latitude], ob.wind_spd, ob.wind_dir);
                         for (var brbi in coords) {
@@ -1752,16 +1719,14 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 }
             }
 
-            for (var obvar in text_info) {
-                for (var txti in text_info[obvar]) {
-                    text_info[obvar][txti] = new Float32Array([].concat.apply([], text_info[obvar][txti]));
-                }
+            for (var obvar in text) {
+                text[obvar].end();
             }
             for (var brbi in barb_info) {
                 barb_info[brbi] = new Float32Array([].concat.apply([], barb_info[brbi]));
             }
 
-            return {'timestamp': valid_time, 'barb_info': barb_info, 'text_info': text_info}
+            return {'timestamp': valid_time, 'barb_info': barb_info, 'text_info': text}
         }
 
         this._frames = new MultiEntityFrameSet(process_obs.bind(this), max_age);
@@ -1829,19 +1794,8 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         gl.drawArrays(gl.TRIANGLES, 0, obs_obj.barb_info['vert'].length / 2);
 
-        this._font_shader.enable_program();
-        this._font_shader.bind_texture('font', 1);
-        this._font_shader.bind_uniform('u_zoom', zoom_matrix, true);
-        this._font_shader.bind_uniform('u_viewport', [this._vp_width, this._vp_height]);
-
         for (var obvar in obs_obj.text_info) {
-            var color = this._text_fmt[obvar]['color'];
-            this._font_shader.bind_uniform('u_fontcolor', color);
-            this._font_shader.bind_attribute('a_pos', obs_obj.text_info[obvar]['vert']);
-            this._font_shader.bind_attribute('a_anch', obs_obj.text_info[obvar]['anch']);
-            this._font_shader.bind_attribute('a_tex', obs_obj.text_info[obvar]['tex']);
-
-            gl.drawArrays(gl.TRIANGLES, 0, obs_obj.text_info[obvar]['vert'].length / 2);
+            obs_obj.text_info[obvar].draw(ctx);
         }
     };
 
@@ -1962,6 +1916,102 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             else            { coords['anch'].push(pos[1]); }
         }
         return coords;
+    };
+
+    this.MultiText = function(gl, align_h, align_v, color, size, dev_pix_rat) {
+        var _vert_shader_src = `
+            attribute vec2 a_pos;
+            attribute vec2 a_anch;
+            attribute vec2 a_tex;
+            uniform mat3 u_zoom;
+            uniform vec2 u_viewport;
+
+            varying vec2 v_tex;
+
+            void main() {
+//              vec2 proj_pos = lcc(a_anch);
+//              vec2 zoom_anch_pos = (vec3(proj_pos, 1.0) * u_zoom).xy;
+                vec2 zoom_anch_pos = (vec3(a_anch, 1.0) * u_zoom).xy;
+                vec2 zoom_pos = zoom_anch_pos + a_pos / u_viewport;
+                gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
+
+                v_tex = a_tex;
+            }
+        `;
+
+        var _frag_shader_src = `
+            precision mediump float;
+
+            varying vec2 v_tex;
+            uniform sampler2D u_tex;
+            uniform vec3 u_fontcolor;
+
+            void main() {
+                vec4 color = texture2D(u_tex, v_tex);
+                if (color.a < 0.1)
+                    discard;
+                gl_FragColor = color * vec4(u_fontcolor, 1.0);
+            }
+        `;
+
+        this._gl = gl;
+
+        this._atlas = _mod.font_atlas;
+        this._align_h = align_h;
+        this._align_v = align_v;
+        this._color = color;
+        this._size = size;
+        this._dpr = dev_pix_rat;
+
+        this._text_data = {'anch':[], 'vert':[], 'tex':[]};
+
+        this._is_ended = false;
+
+        this._font_shader = new WGLShader(gl, 'font', _vert_shader_src, _frag_shader_src);
+        this._font_shader.compile_program();
+
+        this._font_shader.register_attribute('a_pos');
+        this._font_shader.register_attribute('a_anch');
+        this._font_shader.register_attribute('a_tex');
+        this._font_shader.register_uniform('vec3', 'u_fontcolor');
+        this._font_shader.register_uniform('mat3', 'u_zoom');
+        this._font_shader.register_uniform('vec2', 'u_viewport');
+        this._font_shader.register_texture('font', 'u_tex', this._atlas.get_texture(), true);
+    };
+
+    this.MultiText.prototype.add_string = function(x, y, string) {
+        if (this._is_ended) {
+            throw "This MultiText has had .end() called on it already!";
+        }
+
+        var coords = this._atlas.gen_str(string, [x, y], this._size, this._align_h, this._align_v, this._dpr);
+
+        for (var txtd in this._text_data) {
+            this._text_data[txtd].push(coords[txtd]);
+        }
+    };
+
+    this.MultiText.prototype.end = function() {
+        for (var txtd in this._text_data) {
+            this._text_data[txtd] = new Float32Array([].concat.apply([], this._text_data[txtd]));
+        }
+        this._is_ended = true;
+    };
+
+    this.MultiText.prototype.draw = function(ctx) {
+        var gl = this._gl;
+
+        this._font_shader.enable_program();
+        this._font_shader.bind_texture('font', 1);
+        this._font_shader.bind_uniform('u_zoom', ctx.zoom_matrix, true);
+        this._font_shader.bind_uniform('u_viewport', [ctx.vp_width, ctx.vp_height]);
+
+        this._font_shader.bind_uniform('u_fontcolor', this._color);
+        this._font_shader.bind_attribute('a_pos', this._text_data['vert']);
+        this._font_shader.bind_attribute('a_anch', this._text_data['anch']);
+        this._font_shader.bind_attribute('a_tex', this._text_data['tex']);
+
+        gl.drawArrays(gl.TRIANGLES, 0, this._text_data['vert'].length / 2);
     };
 
     this.FontAtlas = function(atlas) {
