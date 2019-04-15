@@ -208,8 +208,13 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                  .on('click', this.layer_container.toggle_animation.bind(this.layer_container));
 
         var gl = this.map.node().getContext('webgl');
+        gl.getExtension('OES_standard_derivatives');
+        gl.enable(gl.BLEND);
 
-        d3.json('trebuchet.atlas', function(atlas) {
+        // Thank you, https://limnu.com/webgl-blending-youre-probably-wrong/!
+        gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+
+        d3.json('trebuchet.v2.atlas', function(atlas) {
             var texture_data = atlas.texture;
             atlas.texture = new Image();
             atlas.texture.onload = function(event) {
@@ -1298,8 +1303,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             void main() {
                 vec4 color = texture2D(u_tex, v_tex);
-                if (color.a < 0.5)
-                    discard;
                 gl_FragColor = color;
             }
         `;
@@ -1603,8 +1606,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
             void main() {
                 vec4 color = texture2D(u_tex, v_tex);
-                if (color.a < 0.1)
-                    discard;
                 gl_FragColor = color * vec4(u_fontcolor, 1.0);
             }
         `;
@@ -1630,7 +1631,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
         this._text_from_ob = {
             'id': function(ob) {
-                return ob.id;
+                return ob.id.replace(/\0.*$/g, '');
             },
             'ta': function(ob) {
                 var tmpf = ob.temperature * 9. / 5 + 32;
@@ -1929,8 +1930,6 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
             varying vec2 v_tex;
 
             void main() {
-//              vec2 proj_pos = lcc(a_anch);
-//              vec2 zoom_anch_pos = (vec3(proj_pos, 1.0) * u_zoom).xy;
                 vec2 zoom_anch_pos = (vec3(a_anch, 1.0) * u_zoom).xy;
                 vec2 zoom_pos = zoom_anch_pos + a_pos / u_viewport;
                 gl_Position = vec4(zoom_pos * 2.0, 0.0, 1.0);
@@ -1940,17 +1939,26 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         `;
 
         var _frag_shader_src = `
+            #extension GL_OES_standard_derivatives : enable
             precision mediump float;
 
             varying vec2 v_tex;
             uniform sampler2D u_tex;
             uniform vec3 u_fontcolor;
+            uniform vec3 u_outlinecolor;
 
             void main() {
-                vec4 color = texture2D(u_tex, v_tex);
-                if (color.a < 0.1)
-                    discard;
-                gl_FragColor = color * vec4(u_fontcolor, 1.0);
+                float edge_distance = 0.5;
+                float outline_distance = 0.8;
+
+                float dist = texture2D(u_tex, v_tex).r;
+                float edge_width = 0.7 * length(vec2(dFdx(dist), dFdy(dist)));
+
+                float blend_edge = smoothstep(edge_distance - edge_width, edge_distance + edge_width, dist);
+                float blend_outline = smoothstep(outline_distance - edge_width, outline_distance + edge_width, dist);
+
+                vec3 color = (1.0 - blend_edge) * u_fontcolor + blend_edge * u_outlinecolor;
+                gl_FragColor = vec4(color, 1.0 - blend_outline);
             }
         `;
 
@@ -1974,6 +1982,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._font_shader.register_attribute('a_anch');
         this._font_shader.register_attribute('a_tex');
         this._font_shader.register_uniform('vec3', 'u_fontcolor');
+        this._font_shader.register_uniform('vec3', 'u_outlinecolor');
         this._font_shader.register_uniform('mat3', 'u_zoom');
         this._font_shader.register_uniform('vec2', 'u_viewport');
         this._font_shader.register_texture('font', 'u_tex', this._atlas.get_texture(), true);
@@ -2007,6 +2016,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         this._font_shader.bind_uniform('u_viewport', [ctx.vp_width, ctx.vp_height]);
 
         this._font_shader.bind_uniform('u_fontcolor', this._color);
+        this._font_shader.bind_uniform('u_outlinecolor', [0.0, 0.0, 0.0]);
         this._font_shader.bind_attribute('a_pos', this._text_data['vert']);
         this._font_shader.bind_attribute('a_anch', this._text_data['anch']);
         this._font_shader.bind_attribute('a_tex', this._text_data['tex']);
@@ -2020,7 +2030,7 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
 
     this.FontAtlas.prototype.gen_char = function(chrc, chr_hgt) {
         if (!this._atlas.glyphs.hasOwnProperty(chrc)) {
-            chrc = ' ';
+            chrc = '?';
         }
 
         var glyph_info = this._atlas.glyphs[chrc];
@@ -2029,18 +2039,18 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         var size_fac = chr_hgt / this._atlas.line_height;
 
         var x1 = 0;
-        var y1 = 0; 
-        var x2 = (glyph_info.width) * size_fac;
-        var y2 = (this._atlas.glyph_height) * size_fac;
+        var y1 = (this._atlas.line_height - (glyph_info.baseline - glyph_info.y)) * size_fac;
+        var x2 = glyph_info.width * size_fac;
+        var y2 = y1 + glyph_info.height * size_fac;
 
         var verts = [
             x1, y1,  x2, y1,  x1, y2,  x1, y2,  x2, y1,  x2, y2
         ];
 
-        var x1 = glyph_info.xpos / img_wid;
-        var y1 = glyph_info.ypos / img_hgt;
-        var x2 = (glyph_info.xpos + glyph_info.width) / img_wid;
-        var y2 = (glyph_info.ypos + this._atlas.glyph_height) / img_hgt;
+        var x1 = glyph_info.x / img_wid;
+        var y1 = glyph_info.y / img_hgt;
+        var x2 = (glyph_info.x + glyph_info.width) / img_wid;
+        var y2 = (glyph_info.y + glyph_info.height) / img_hgt;
 
         var tex_coords = [
             x1, y1,  x2, y1,  x1, y2,  x1, y2,  x2, y1,  x2, y2
@@ -2073,21 +2083,26 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
                 kerning = 0;
             }
 
-            var coords = this.gen_char(chars[ichr], str_hgt * dpr);
-            for (icd in coords.vert) {
-                if (!(icd % 2)) { coords.vert[icd] += str_wid + kerning; }
+            if (chars[ichr] == ' ') {
+                // Add some padding for a space
+                str_wid += 20;
             }
+            else {
+                var coords = this.gen_char(chars[ichr], str_hgt * dpr);
+                for (icd in coords.vert) {
+                    if (!(icd % 2)) { coords.vert[icd] += str_wid + kerning - 1; }
+                }
 
-            for (icd in coords.vert) {
-                if (!(icd % 2)) { str_wid = Math.max(str_wid, coords.vert[icd]); }
+                for (icd in coords.vert) {
+                    if (!(icd % 2)) { str_wid = Math.max(str_wid, coords.vert[icd]); }
+                }
+
+                for (var icd = 0; icd < coords.vert.length / 2; icd++) {
+                    anchs.push(pos);
+                }
+                verts.push(coords.vert);
+                tex_coords.push(coords.tex);
             }
-
-            for (var icd = 0; icd < coords.vert.length / 2; icd++) {
-                anchs.push(pos);
-            }
-
-            verts.push(coords.vert);
-            tex_coords.push(coords.tex);
         }
 
         anchs = [].concat.apply([], anchs)
@@ -2298,11 +2313,12 @@ define(['d3', 'd3-geo', 'metr/io', 'metr/utils', 'metr/mapping', 'sprintf'], fun
         gl.bindTexture(gl.TEXTURE_2D, this._tex[tex_name]);
         if (gen_mipmap) {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
         }
         else {
             gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+            gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         }
-        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
 
